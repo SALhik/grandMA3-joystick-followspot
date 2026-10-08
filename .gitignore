@@ -3,3 +3,4 @@ __pycache__/
 .superpowers/
 settings.json
 *.log
+.DS_Store
