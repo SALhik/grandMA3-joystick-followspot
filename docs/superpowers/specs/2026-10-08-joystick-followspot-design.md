@@ -53,4 +53,4 @@ Verify real joystick axes/buttons without emitting lighting commands. Test dead 
 
 ## Approval status
 
-The user approved the in-chat design and explicitly confirmed proportional speed on 2026-10-08. This written specification is awaiting review before implementation planning.
+The user approved the in-chat design, explicitly confirmed proportional speed, and approved this written specification on 2026-10-08. Implementation was then authorized in the same session.

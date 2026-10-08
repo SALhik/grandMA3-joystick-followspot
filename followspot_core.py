@@ -238,8 +238,10 @@ class Controller:
         self.active = True
         try:
             self._output(axes)
-        except Exception:
-            self.stop()
+        except Exception as exc:
+            errors = self.stop()
+            if errors:
+                raise RuntimeError(f'{exc}; Release send failed: {"; ".join(errors)}') from exc
             raise
 
     def _output(self, axes):
@@ -265,10 +267,11 @@ class Controller:
             for index, (old, new) in enumerate(zip(self.previous_buttons, buttons)):
                 mapping = self.settings.buttons.get(str(index), {})
                 if new and not old:
+                    # Own every observed press, including release-only mappings.
+                    # Buttons held at Start are not observed presses and stay unowned.
+                    self.pressed.add(index)
                     command = mapping.get('press', '').strip()
                     if command:
-                        # Track before sending: a failed send may be ambiguous.
-                        self.pressed.add(index)
                         self.send('/cmd', command)
                 elif old and not new and index in self.pressed:
                     command = mapping.get('release', '').strip()
@@ -276,8 +279,10 @@ class Controller:
                         self.send('/cmd', command)
                     self.pressed.discard(index)
             self.previous_buttons = list(buttons)
-        except Exception:
-            self.stop()
+        except Exception as exc:
+            errors = self.stop()
+            if errors:
+                raise RuntimeError(f'{exc}; Release send failed: {"; ".join(errors)}') from exc
             raise
 
     def stop(self):

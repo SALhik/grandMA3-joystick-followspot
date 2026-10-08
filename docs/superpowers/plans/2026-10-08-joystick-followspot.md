@@ -32,11 +32,11 @@
 
 **Interfaces:** `Settings.from_dict(data)`, `Settings.validate()`, `Motion(settings).step(axes, dt)`, `Controller(settings, sender).start/stop/tick`, `OscSender(host, port, prefix).send(address, value)`.
 
-- [ ] Write unittest cases for proportional velocity, dead zone, diagonal cap, centre correction, slider endpoints, clamp/stall behaviour, settings roundtrip/rejection, explicit-percent MArker commands, and button lifecycle.
-- [ ] Run `python3 -m unittest discover -s tests -v`; expect missing implementation failure.
-- [ ] Implement validated JSON settings, time-based motion, OSC encoding, explicit `At Absolute Percent` commands, and output lifecycle.
-- [ ] Run the same suite; expect all tests passing. Add a loopback UDP check where the sandbox permits sockets.
-- [ ] Commit the tested core.
+- [x] Write unittest cases for proportional velocity, dead zone, diagonal cap, centre correction, slider endpoints, clamp/stall behaviour, settings roundtrip/rejection, explicit-percent MArker commands, and button lifecycle.
+- [x] Run `python3 -m unittest discover -s tests -v`; observe missing implementation failure.
+- [x] Implement validated JSON settings, time-based motion, OSC encoding, explicit `At Absolute Percent` commands, and output lifecycle.
+- [x] Run the same suite; all tests pass. UDP bind was denied by the sandbox; packet encoding verified without network I/O.
+- [x] Commit the tested core.
 
 ### Task 2: Joystick adapter and settings window
 
@@ -44,20 +44,24 @@
 
 **Interfaces:** `Joystick.devices() -> list[tuple[int, str]]`, `Joystick.open(index)`, `Joystick.read() -> (list[float], list[bool])`, `Joystick.close()`; consumes Task 1's validated settings/controller.
 
-- [ ] Write tests for signed-axis normalization, axis learning, and simulated SDL virtual-device input/disconnect when available.
-- [ ] Run tests and observe missing adapter failure.
-- [ ] Implement SDL loading, background input, device selection, state sampling, attachment checks, and clean closure.
-- [ ] Implement the window's live view, stopped-only settings, calibration/learn controls, button editor, Start/Stop/reset, and error recovery. Use headless logic tests plus a manual GUI smoke check if the environment allows one.
-- [ ] Run the suite and read the real joystick without OSC output; commit.
+- [x] Write tests for signed-axis normalization, axis learning, and simulated SDL virtual-device input/disconnect.
+- [x] Run tests and observe missing adapter failure.
+- [x] Implement SDL loading, background input, device selection, state sampling, attachment checks, and clean closure.
+- [x] Implement the window's live view, stopped-only settings, calibration/learn controls, button editor, Start/Stop/reset, and error recovery. Headless tests pass; native window creation aborts at macOS application registration in the sandbox.
+- [x] Run the suite and attempt real joystick input without OSC output. SDL does not enumerate the physical device in this environment; virtual-device tests pass. Commit.
 
 ### Task 3: Launch, setup guide, final verification
 
 **Files:** `Launch Followspot.command`, `README.md`, `requirements.txt`, `settings.example.json`
 
-- [ ] Provide a launcher selecting a Tk-capable Python; document SDL2 installation only if missing.
-- [ ] Document exact MA setup, marker movement-space conversion, executor brightness, button examples, startup/stop behaviour, and UDP/programmer limitations.
-- [ ] Run all tests, compile all modules, and perform available device/OSC/UI checks; report integration checks that require the user's onPC show.
-- [ ] Review the finished implementation against the approved spec and commit delivery files.
+- [x] Provide a launcher selecting a Tk-capable Python; document SDL2 installation only if missing.
+- [x] Document exact MA setup, marker movement-space conversion, executor brightness, button examples, startup/stop behaviour, and UDP/programmer limitations.
+- [x] Run all tests, compile all modules, and perform available device/OSC/UI checks; report integration checks that require the user's onPC show.
+- [x] Review the finished implementation against the approved spec; fix both important findings with RED→GREEN tests and commit delivery files.
+
+## Final verification limits
+
+Physical joystick enumeration/input, visual Tk layout, UDP reception and fixture aiming remain unverified in this sandbox. README explicitly requires the normal macOS/onPC integration check. Automated verification covers 19 tests, including a real SDL virtual joystick.
 
 ## Execution decision
 

@@ -125,6 +125,29 @@ class CoreTests(unittest.TestCase):
         self.assertFalse(c.active)
         self.assertIn(('/cmd', 'Up'), emitted)
 
+    def test_release_only_mapping_fires_after_a_press(self):
+        emitted = []
+        s = self.settings(buttons={'0': {'press': '', 'release': 'Go+ Sequence 1'}})
+        c = core.Controller(s, lambda a, v: emitted.append((a, v)))
+        c.start([0, 0, -1], [False])
+        emitted.clear()
+        c.tick([0, 0, -1], [True], 0.03)
+        c.tick([0, 0, -1], [False], 0.03)
+        self.assertEqual(emitted, [('/cmd', 'Go+ Sequence 1')])
+
+    def test_transport_error_reports_failed_cleanup_release(self):
+        def send(a, v):
+            if a.endswith('Fader201') and v == 100:
+                raise OSError('fader transmission failed')
+            if v == 'Up':
+                raise OSError('release transmission failed')
+        c = core.Controller(self.settings(buttons={'0': {'press': 'Down', 'release': 'Up'}}), send)
+        c.start([0, 0, -1], [False])
+        c.tick([0, 0, -1], [True], 0.03)
+        with self.assertRaisesRegex(RuntimeError, 'Release send failed: release transmission failed'):
+            c.tick([0, 0, 1], [True], 0.03)
+        self.assertFalse(c.active)
+
 
 if __name__ == '__main__':
     unittest.main()

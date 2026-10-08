@@ -40,7 +40,6 @@ class App:
         self.axes, self.buttons = [], []
         self.device_choices = []
         self.last_tick = time.monotonic()
-        self.last_scan = 0
         self.last_ui = 0
         self.root.title('Joystick Followspot · grandMA3')
         self.root.geometry('860x720')

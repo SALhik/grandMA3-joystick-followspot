@@ -2,7 +2,6 @@
 import ctypes as ct
 import ctypes.util
 import os
-from pathlib import Path
 
 
 def normalize_axis(value):
