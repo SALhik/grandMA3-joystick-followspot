@@ -1,8 +1,64 @@
 import unittest
 import joystick
+import sys
+from unittest.mock import patch
+from types import SimpleNamespace
 
 
 class JoystickTests(unittest.TestCase):
+    def test_native_refresh_reenumerates_after_reconnect(self):
+        # The OS manager caches a snapshot until SetDeviceMatching re-enumerates.
+        # Simulate that external API contract, and assert the returned device.
+        state = {'cached': 101, 'current': 101}
+        def rematch(manager, criteria):
+            state['cached'] = state['current']
+        def set_values(snapshot, values):
+            values[0] = snapshot
+        j = joystick.MacHIDJoystick.__new__(joystick.MacHIDJoystick)
+        j.manager = 1
+        j.device_set = None
+        j.io = SimpleNamespace(IOHIDManagerSetDeviceMatching=rematch,
+                               IOHIDManagerCopyDevices=lambda manager: state['cached'])
+        j.cf = SimpleNamespace(CFRelease=lambda snapshot: None,
+                               CFSetGetCount=lambda snapshot: 1, CFSetGetValues=set_values)
+        j.number = lambda device, key: {'PrimaryUsagePage': 1, 'PrimaryUsage': 4, 'LocationID': device}[key]
+        j.name = lambda device: 'New controller' if device == 102 else 'Old controller'
+        self.assertEqual(j.devices(), [(0, 'Old controller')])
+        state['current'] = 102
+        self.assertEqual(j.devices(), [(0, 'New controller')])
+
+    def test_native_hid_axis_normalization(self):
+        self.assertEqual(joystick.normalize_hid_axis(0, 0, 255), -1)
+        self.assertEqual(joystick.normalize_hid_axis(255, 0, 255), 1)
+        self.assertEqual(joystick.normalize_hid_axis(0, -100, 100), 0)
+        with self.assertRaises(ValueError):
+            joystick.normalize_hid_axis(0, 0, 0)
+
+    def test_empty_sdl_list_falls_back_to_native_device(self):
+        # These doubles stand in for OS APIs; the actual wrapper policy is tested.
+        sdl = SimpleNamespace(handle=None, lib=None, devices=lambda: [], shutdown=lambda: None)
+        native = SimpleNamespace(handle=None, devices=lambda: [(0, 'PXN-2113 Pro')],
+                                 read=lambda: ([0, 0, -1], [False]), shutdown=lambda: None)
+        with patch.object(joystick, 'SDLJoystick', return_value=sdl), \
+             patch.object(joystick, 'MacHIDJoystick', return_value=native), \
+             patch.object(joystick.sys, 'platform', 'darwin'):
+            j = joystick.Joystick()
+            self.assertEqual(j.devices(), [(0, 'PXN-2113 Pro')])
+            self.assertEqual(j.read(), ([0, 0, -1], [False]))
+            j.shutdown()
+
+    @unittest.skipUnless(sys.platform == 'darwin', 'macOS HID only')
+    def test_native_discovery_lists_only_controller_usages(self):
+        j = joystick.MacHIDJoystick()
+        try:
+            devices = j.devices()
+            for record in j.records:
+                self.assertEqual(record['page'], 1)
+                self.assertIn(record['usage'], (4, 5, 8))
+            self.assertEqual(len(devices), len(j.records))
+        finally:
+            j.shutdown()
+
     def test_signed_axis_endpoints(self):
         self.assertEqual(joystick.normalize_axis(-32768), -1)
         self.assertEqual(joystick.normalize_axis(32767), 1)

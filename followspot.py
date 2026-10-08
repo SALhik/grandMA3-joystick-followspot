@@ -204,6 +204,11 @@ class App:
             self.axes, self.buttons = [], []
             self.device_choices = self.joystick.devices()
             self.device_box['values'] = [f'{index}: {name}' for index, name in self.device_choices]
+            if not self.device_choices:
+                self.device_box.set('')
+                self.device_label.set('No joystick detected')
+                self.status.set('No controller was found by SDL or native HID. Reconnect it and click Refresh.')
+                return
             matches = [i for i, (_, name) in enumerate(self.device_choices) if name == self.values['device_name'].get()]
             if len(matches) == 1:
                 self.device_box.current(matches[0])
@@ -442,7 +447,7 @@ def main():
             for index, name in devices:
                 print(f'{index}: {name}')
             if not devices:
-                print('No joystick detected by SDL. Reconnect it and run from a normal macOS terminal.')
+                print('No joystick detected by SDL or native HID. Reconnect it and try again.')
                 return 1
             if args.monitor is not None:
                 if not 0 < args.monitor <= 3600:

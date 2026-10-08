@@ -8,20 +8,26 @@ All physical fixture assignment and XYZ aiming stay in grandMA3. This tool does 
 
 Double-click **Launch Followspot.command** in this folder. It selects a Python with Tk support and opens the settings window. Output starts **stopped** every time.
 
-On this Mac, Python 3.12 with Tk and SDL2 are installed. No Apple developer account, Python package installation, or app signing is needed. If macOS opens the launcher as text, run it from Terminal:
+On this Mac, Python 3.12 with Tk and SDL2 are installed. No Apple developer account, Python package installation, or app signing is needed. The reader uses native macOS HID if SDL does not find the joystick. If macOS opens the launcher as text, run it from Terminal:
 
 ```sh
 cd ~/joystick-followspot
 zsh 'Launch Followspot.command'
 ```
 
-For another Mac, use Python 3.10+ with Tkinter (the python.org macOS installer includes it) and install SDL2 if missing:
+For another Mac, use Python 3.10+ with Tkinter (the python.org macOS installer includes it). Native HID works without SDL2; SDL2 can optionally be installed for the SDL backend:
 
 ```sh
 brew install sdl2
 ```
 
 SDL2 is found in the standard Homebrew or framework locations. A custom library path can be supplied through `FOLLOWSPOT_SDL2`. No virtual environment is required.
+
+### Joystick detection or access errors
+
+If SDL does not list the joystick, the reader automatically lists controller devices through macOS HID and opens only the selected joystick. Keyboard/mouse interfaces are excluded. This avoids confusing an SDL detection failure with a disconnected USB device.
+
+If the window says **macOS denied input access**, the controller was detected but could not be opened. Check **System Settings → Privacy & Security → Input Monitoring** for the app launching Python (for example Terminal, iTerm, or Python), then quit/relaunch that app if you choose to permit access. The script does not change permissions or bypass a denial. A restricted/sandboxed terminal may still be unable to read the device. Do not grant permissions solely for an empty list; use the explicit error to identify an access failure.
 
 ## Configure onPC
 
@@ -92,4 +98,4 @@ python3 -m unittest discover -s tests -v
 
 The CLI input monitor does not need Tk. The normal Homebrew Python can run it even if it lacks `_tkinter`.
 
-Development verification: core motion/configuration/OSC-packet tests, simulated SDL joystick input/disconnect tests, and headless window lifecycle tests pass. MA's installed 2.5 system tests confirm the `XYZ_X`, `XYZ_Y`, `XYZ_Z`, and `XYZ_MArker` attribute names. The agent sandbox cannot create a native Tk window, bind UDP loopback sockets, or enumerate the actual joystick through SDL. Physical input, visual UI layout, OSC reception, movement smoothness and real fixture aiming therefore require a normal macOS launch and an onPC test show before show use.
+Development verification: core motion/configuration/OSC-packet tests, simulated SDL joystick input/disconnect tests, native HID discovery/fallback tests, and headless window lifecycle tests pass. The updated native detector lists the connected **PXN-2113 Pro** in this session; its device-open call reports **0xe00002e2 (not permitted)** inside the sandbox. MA's installed 2.5 system tests confirm the `XYZ_X`, `XYZ_Y`, `XYZ_Z`, and `XYZ_MArker` attribute names. The agent sandbox cannot create a native Tk window, bind UDP loopback sockets, or read the physical joystick. Physical input, visual UI layout, OSC reception, movement smoothness and real fixture aiming therefore require a normal macOS launch and an onPC test show before show use.
