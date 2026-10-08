@@ -4,6 +4,8 @@ A small Python controller for grandMA3 onPC 2.5 on the same Mac. The stick moves
 
 All physical fixture assignment and XYZ aiming stay in grandMA3. This tool does not calculate pan/tilt or manage a fixture list.
 
+For AI agents and contributors modifying this project, start with [AGENTS.md](AGENTS.md) for the code map, development workflow, integration contracts, and current verification limits.
+
 ## Launch
 
 Double-click **Launch Followspot.command** in this folder. It selects a Python with Tk support and opens the settings window. Output starts **stopped** every time.
