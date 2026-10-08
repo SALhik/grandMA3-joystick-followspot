@@ -70,10 +70,18 @@ class CoreTests(unittest.TestCase):
                 s.save(path)
             self.assertEqual(core.Settings.load(path).max_speed, 1)
 
-    def test_marker_uses_space_bounds_and_explicit_percent(self):
+    def test_marker_selects_before_setting_space_percent_attributes(self):
         s = self.settings(marker_id=7, space_x_min=-10, space_x_max=10)
         commands = core.marker_commands(s, (2, 0, 1.5))
-        self.assertEqual(commands[0], 'MArker 7 Attribute "XYZ_X" At Absolute Percent 60.000000')
+        # Selection and attribute assignment are separate MA commands. Clear only
+        # selection so values are not applied to other fixtures in the programmer.
+        self.assertEqual(commands, [
+            'ClearSelection',
+            'MArker 7',
+            'Attribute "XYZ_X" At Absolute Percent 60.000000',
+            'Attribute "XYZ_Y" At Absolute Percent 50.000000',
+            'Attribute "XYZ_Z" At Absolute Percent 50.750000',
+        ])
 
     def test_osc_encoding_against_literal_packet(self):
         self.assertEqual(core.osc_packet('/cmd', 'Go'),

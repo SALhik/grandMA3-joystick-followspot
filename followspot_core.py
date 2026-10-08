@@ -175,12 +175,14 @@ def learn_axis(before, after, threshold=0.3):
 
 
 def marker_commands(s, xyz):
-    commands = []
+    # MA requires selection and attribute assignment as separate commands.
+    # ClearSelection preserves programmer values and isolates the target marker.
+    commands = ['ClearSelection', f'MArker {s.marker_id}']
     for axis, value in zip(('x', 'y', 'z'), xyz):
         lo, hi = getattr(s, f'space_{axis}_min'), getattr(s, f'space_{axis}_max')
         percent = clamp((value - lo) / (hi - lo) * 100, 0, 100)
         attr = getattr(s, f'attribute_{axis}')
-        commands.append(f'MArker {s.marker_id} Attribute "{attr}" At Absolute Percent {percent:.6f}')
+        commands.append(f'Attribute "{attr}" At Absolute Percent {percent:.6f}')
     return commands
 
 
@@ -247,7 +249,8 @@ class Controller:
     def _output(self, axes):
         commands = marker_commands(self.settings, self.motion.xyz)
         if commands != self.last_commands:
-            # One message, three explicit selections. MA does not accept OSC bundles.
+            # Keep selection and XYZ assignments in one OSC command string.
+            # MA does not accept OSC bundles.
             self.send('/cmd', '; '.join(commands))
             self.last_commands = commands
         level = round(self.motion.brightness(axes), 1)
