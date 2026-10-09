@@ -62,9 +62,9 @@ MA's references: [XYZ activation](https://help.malighting.com/grandMA3/2.5/HTML/
 1. In **Controls**, select the PXN joystick. Click **Refresh** after connecting/reconnecting it.
 2. Use **Learn** beside X, Y, and Brightness. Move only the intended control after clicking. Axis numbers start at zero. The initial 0/1/2 mappings are placeholders; a flight stick's slider may be axis 3 rather than 2.
 3. Release the stick and click **Calibrate centre**. Set inversion, dead zone and maximum speed. Default speed is 1 m/s; a half deflection beyond the dead zone moves at half the maximum speed. Diagonal travel has the same maximum speed as horizontal/vertical travel.
-4. In **Target / stage**, enter the MArker CID, Z height, operating limits and initial X/Y. Operating limits restrict your joystick travel and may be smaller than the full movement space. **Reset target** changes the script's displayed position while stopped; it sends that position when you next Start.
+4. In **Target / stage**, enter the MArker CID, Z height, operating limits and initial X/Y. Operating limits restrict your joystick travel and may be smaller than the full movement space. **Reset target** returns to the initial X/Y and configured Z. While stopped, this is local; Start sends that position. In **Live**, **Lock reset while running** is enabled by default. Uncheck it to allow an immediate reset during output, retaining brightness and keeping output running. The lock can be changed while running and is saved immediately, without applying other settings drafts. Centre the stick if you want to hold the reset position; a deflected stick continues movement on subsequent polls.
 5. In **OSC**, set the host/port/prefix and brightness executor page/number. Default marker attribute library names are `XYZ_X`, `XYZ_Y`, `XYZ_Z`; confirm using `List Attribute` if your fixture library differs.
-6. In **Buttons**, click **Learn button**, press the desired button, enter commands, and click **Set mapping**. Then **Save / apply settings**. Examples:
+6. In **Buttons**, click **Learn button**, press the desired button, and choose **Action on press**. Choose **MA command** to enter press/release commands, or **Start output**, **Stop output**, **Toggle output**, or **Reset target** to control this program. Click **Set mapping**, then **Save / apply settings**. MA command examples:
 
    | Action | Press | Release |
    | --- | --- | --- |
@@ -72,10 +72,12 @@ MA's references: [XYZ activation](https://help.malighting.com/grandMA3/2.5/HTML/
    | Run a macro | `Go+ Macro 5` | empty |
    | Held flash | `Flash On Executor 1.202` | `Flash Off Executor 1.202` |
 
-   Commands execute as entered. Buttons fire once per transition. A button already held when you Start is ignored until it is released and pressed again. Default button mappings are empty.
+   Commands execute as entered. MA commands are sent only while output runs. Local actions fire once per press; Start and Toggle can start output while stopped, and Reset obeys the same Live lock as the window button. Each mapping chooses one action; local actions do not also send MA press/release commands. Stop performs the same button-release cleanup as the window button.
+
+   For simultaneous local presses, Stop takes priority. While stopped, Start takes priority over Reset. Start is ignored when already running; Toggle acts as Stop when running and Start when stopped. A button already held when you connect, apply settings or Start is ignored until it is released and pressed again, including after a failed Start. Learning suppresses local actions, including the press that completes learning. Default button mappings are empty.
 7. Save/apply. Check **Live** for the target and slider level, then click **Start output**. Start also applies/saves the currently displayed settings. It immediately sends the displayed target and current brightness; it does not read the fixture's existing position or fader level from onPC.
 
-Settings are saved to `settings.json` beside the script. To share an example configuration, use `settings.example.json`; it is not loaded automatically. Stop before editing settings. While output runs, settings tabs are disabled.
+Settings are saved to `settings.json` beside the script. To share an example configuration, use `settings.example.json`; it is not loaded automatically. Existing settings load without migration: missing `reset_locked` defaults to `true`, and button mappings without `action` remain MA commands. New local mappings use an action such as `"0": {"action": "toggle"}`; valid actions are `command`, `start`, `stop`, `toggle` and `reset`. Stop before editing settings. While output runs, settings tabs are disabled; the reset lock remains available in Live.
 
 ## Stop and restart
 

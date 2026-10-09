@@ -13,6 +13,7 @@
   "z": 1.5,
   "initial_x": 0.0,
   "initial_y": 0.0,
+  "reset_locked": true,
   "x_min": -10.0,
   "x_max": 10.0,
   "y_min": -10.0,

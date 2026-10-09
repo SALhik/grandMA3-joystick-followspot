@@ -29,7 +29,7 @@ current code and Git state, and preserve unrelated operator changes.
 | File | Responsibility |
 | --- | --- |
 | `followspot.py` | Tkinter window, settings editor, device selection/learning, polling, start/stop lifecycle, diagnostic CLI |
-| `followspot_core.py` | Settings validation/persistence, proportional motion, coordinate conversion, OSC encoding/sending, button edges and output controller |
+| `followspot_core.py` | Settings validation/persistence, proportional motion, coordinate conversion, OSC encoding/sending, local button action edges and output controller |
 | `joystick.py` | SDL2 and native macOS HID readers via `ctypes`, normalization and backend selection |
 | `Launch Followspot.command` | Selects a Tk-capable Python and launches the window |
 | `settings.example.json` | Shareable example configuration |
@@ -76,6 +76,19 @@ failures; never report skipped or blocked hardware checks as passing.
   release. Read/send failure stops output; there is no automatic resume.
 - Settings changes require stopped output. Release commands must be attempted
   before closing the sender, and release failures must remain visible.
+- The saved `reset_locked` flag defaults to true. Its Live toggle is available
+  while running and saves only that flag, leaving other settings drafts unapplied.
+  Stopped Reset is local; unlocked live Reset immediately resends initial X/Y/Z
+  without changing brightness or stopping output. Deflected input resumes motion
+  on following polls.
+- Button mappings default to MA commands when `action` is absent. Local actions
+  (`start`, `stop`, `toggle`, `reset`) fire on press and cannot include MA commands.
+  `ButtonActions` tracks edges independently of output so Start works while stopped.
+  Seed it on device selection, settings apply and Start; learning samples suppress
+  local actions. Stop takes priority on simultaneous presses. While stopped, Start
+  takes priority over Reset; Start is ignored when already running. Start seeds
+  fresh local button state before validation/transmission, including failed starts.
+  A Reset sample still processes MA button edges, with no movement that sample.
 - Coordinates are in metres in the script. Convert to percent using the actual
   MArker **Movement Space** bounds, which differ from operating limits and the
   MArker **Target Space**. Defaults are examples, not measured stage geometry.

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Small joystick-to-grandMA3 controller. Run directly or use the launcher."""
 import argparse
-from dataclasses import fields
+from dataclasses import fields, replace
 import json
 from pathlib import Path
 import sys
 import time
 
-from followspot_core import Controller, OscSender, Settings, clamp, learn_axis
+from followspot_core import BUTTON_ACTIONS, ButtonActions, Controller, OscSender, Settings, clamp, learn_axis
 from joystick import Joystick
 
 SETTINGS_PATH = Path(__file__).resolve().with_name('settings.json')
@@ -38,6 +38,7 @@ class App:
         self.controller = None
         self.learning = None
         self.axes, self.buttons = [], []
+        self.button_actions = ButtonActions()
         self.device_choices = []
         self.last_tick = time.monotonic()
         self.last_ui = 0
@@ -80,7 +81,7 @@ class App:
         outer = ttk.Frame(self.root, padding=16)
         outer.pack(fill='both', expand=True)
         ttk.Label(outer, text='Joystick Followspot', font=('Helvetica', 20, 'bold')).pack(anchor='w')
-        ttk.Label(outer, text='Stick → X/Y speed     Slider → brightness     Buttons → onPC commands').pack(anchor='w', pady=(4, 12))
+        ttk.Label(outer, text='Stick → X/Y speed     Slider → brightness     Buttons → commands / output controls').pack(anchor='w', pady=(4, 12))
         notebook = ttk.Notebook(outer)
         notebook.pack(fill='both', expand=True)
         self.notebook = notebook
@@ -108,8 +109,12 @@ class App:
         self.start_button = ttk.Button(bar, text='Start output', command=self.start_output)
         self.start_button.pack(side='left', padx=(0, 10))
         ttk.Button(bar, text='Stop output', command=self.stop_output).pack(side='left', padx=(0, 10))
-        self.reset_button = ttk.Button(bar, text='Reset target (stopped)', command=self.reset_target)
+        self.reset_button = ttk.Button(bar, text='Reset target', command=self.reset_target)
         self.reset_button.pack(side='left')
+        ttk.Checkbutton(live, text='Lock reset while running', variable=self.values['reset_locked'],
+                        command=self.set_reset_lock).pack(anchor='w', pady=4)
+        ttk.Label(live, text='Unlocked Reset immediately sends the initial target while running; brightness is retained.',
+                  wraplength=740).pack(anchor='w', pady=4)
         device_bar = ttk.Frame(controls)
         device_bar.grid(row=0, column=0, columnspan=4, sticky='ew', pady=(0, 10))
         ttk.Label(device_bar, text='Joystick').pack(side='left')
@@ -155,28 +160,43 @@ class App:
             self.entry(network, row, label, key, width=26)
         ttk.Label(network, text='In onPC: enable OSC Input, Receive and Receive Command.\nUse UDP and the same port/prefix. Set FaderRange to 100.\nIf loopback is unavailable, enter the IP selected in onPC’s OSC Interface.',
                   wraplength=740).grid(row=8, column=0, columnspan=3, sticky='w', pady=15)
-        self.button_table = ttk.Treeview(mappings, columns=('press', 'release'), height=8)
+        self.button_table = ttk.Treeview(mappings, columns=('action', 'press', 'release'), height=6)
         self.button_table.heading('#0', text='Button')
         self.button_table.column('#0', width=65, stretch=False)
+        self.button_table.heading('action', text='Action (on press)')
+        self.button_table.column('action', width=135, stretch=False)
         for key in ('press', 'release'):
             self.button_table.heading(key, text=key.capitalize() + ' command')
-            self.button_table.column(key, width=290)
+            self.button_table.column(key, width=240)
         self.button_table.pack(fill='x')
         self.button_table.bind('<<TreeviewSelect>>', self.load_button)
         self.button_id = self.tk.StringVar(value='0')
+        self.button_action = self.tk.StringVar(value=BUTTON_ACTIONS['command'])
         self.press_command = self.tk.StringVar()
         self.release_command = self.tk.StringVar()
+        line = ttk.Frame(mappings)
+        line.pack(fill='x', pady=4)
+        ttk.Label(line, text='Action on press', width=17).pack(side='left')
+        action_box = ttk.Combobox(line, textvariable=self.button_action,
+                                 values=list(BUTTON_ACTIONS.values()), state='readonly')
+        action_box.pack(side='left', fill='x', expand=True)
+        action_box.bind('<<ComboboxSelected>>', self.update_button_editor)
         for label, var in [('Button number', self.button_id), ('Press command', self.press_command), ('Release command', self.release_command)]:
             line = ttk.Frame(mappings)
             line.pack(fill='x', pady=4)
             ttk.Label(line, text=label, width=17).pack(side='left')
-            ttk.Entry(line, textvariable=var).pack(side='left', fill='x', expand=True)
+            entry = ttk.Entry(line, textvariable=var)
+            entry.pack(side='left', fill='x', expand=True)
+            if var is self.press_command:
+                self.press_entry = entry
+            elif var is self.release_command:
+                self.release_entry = entry
         line = ttk.Frame(mappings)
         line.pack(anchor='w', pady=8)
         ttk.Button(line, text='Learn button', command=lambda: self.begin_learn('button')).pack(side='left', padx=(0, 8))
         ttk.Button(line, text='Set mapping', command=self.set_button).pack(side='left', padx=(0, 8))
         ttk.Button(line, text='Remove mapping', command=self.remove_button).pack(side='left')
-        ttk.Label(mappings, text='Examples: Go+ Sequence 10; Go+ Macro 5.\nFor held actions, set both press and release commands. Click Set mapping, then Save / apply settings.',
+        ttk.Label(mappings, text='MA commands: Go+ Sequence 10; Go+ Macro 5. Held actions use press/release commands.\nLocal actions fire once per press, including Start while stopped. Reset obeys the Live lock.\nClick Set mapping, then Save / apply settings.',
                   wraplength=740).pack(anchor='w', pady=8)
         self.render_buttons()
         self.save_button = ttk.Button(outer, text='Save / apply settings', command=self.apply_settings)
@@ -202,6 +222,7 @@ class App:
                 self.joystick = Joystick()
             self.joystick.close()
             self.axes, self.buttons = [], []
+            self.button_actions = ButtonActions()
             self.device_choices = self.joystick.devices()
             self.device_box['values'] = [f'{index}: {name}' for index, name in self.device_choices]
             if not self.device_choices:
@@ -231,6 +252,7 @@ class App:
         try:
             self.joystick.open(index)
             self.axes, self.buttons = self.joystick.read()
+            self.button_actions.seed(self.buttons)
             self.values['device_name'].set(name)
             self.device_label.set(f'{name} · {len(self.axes)} axes · {len(self.buttons)} buttons')
             self.status.set('Joystick connected. Learn the axes and calibrate the released stick before Start.')
@@ -267,6 +289,9 @@ class App:
             return False
         try:
             settings = settings_from_values(self.values, self.draft_buttons)
+            if self.joystick and self.joystick.handle:
+                self.axes, self.buttons = self.joystick.read()
+            self.button_actions.seed(self.buttons)
             settings.save(self.settings_path)
             xyz = self.controller.motion.xyz
             self.settings = settings
@@ -276,7 +301,7 @@ class App:
             self.update_position()
             self.status.set('Settings saved and applied. Output remains stopped.')
             return True
-        except (OSError, ValueError) as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             self.messagebox.showerror('Settings', str(exc))
             return False
 
@@ -292,6 +317,8 @@ class App:
             if self.joystick is None:
                 raise ConnectionError('Connect a joystick first.')
             self.axes, self.buttons = self.joystick.read()
+            # Suppress held local actions even if validation or the first send fails.
+            self.button_actions.seed(self.buttons)
             self.controller.motion.check_axes(self.axes)
             invalid_buttons = [key for key in self.settings.buttons if int(key) >= len(self.buttons)]
             if invalid_buttons:
@@ -328,22 +355,59 @@ class App:
     def lock_settings(self, locked):
         for tab in self.setting_tabs:
             self.notebook.tab(tab, state='disabled' if locked else 'normal')
-        for button in (self.start_button, self.reset_button, self.save_button):
+        for button in (self.start_button, self.save_button):
             button.configure(state='disabled' if locked else 'normal')
+        self.reset_button.configure(state='disabled' if locked and self.settings.reset_locked else 'normal')
         if locked:
             self.notebook.select(0)
 
+    def set_reset_lock(self):
+        try:
+            settings = replace(self.settings, reset_locked=self.values['reset_locked'].get())
+            # Save only the lock; other editor values remain unapplied drafts.
+            settings.save(self.settings_path)
+            self.settings.reset_locked = settings.reset_locked
+            self.status.set('Reset is locked while running.' if settings.reset_locked else
+                            'Reset is unlocked: it can immediately send the initial target while running.')
+        except (OSError, ValueError) as exc:
+            self.values['reset_locked'].set(self.settings.reset_locked)
+            self.messagebox.showerror('Could not save reset lock', str(exc))
+        self.lock_settings(self.controller.active)
+
     def reset_target(self):
-        if not self.require_stopped() or not self.apply_settings():
-            return
-        s = self.settings
-        self.controller.motion.xyz = [s.initial_x, s.initial_y, s.z]
-        self.update_position()
-        self.status.set('Target reset locally. Start will send this position to onPC.')
+        if self.controller.active and self.settings.reset_locked:
+            self.status.set('Reset is locked while running. Unlock it in Live or stop output first.')
+            return False
+        if not self.controller.active and not self.apply_settings():
+            return False
+        try:
+            self.controller.reset_target()
+            self.update_position()
+            self.status.set('Initial target sent. Output continues; brightness is retained.' if self.controller.active else
+                            'Target reset locally. Start will send this position to onPC.')
+            return True
+        except (OSError, RuntimeError, ValueError) as exc:
+            self.stop_output(str(exc))
+            return False
 
     def update_position(self):
         x, y, z = self.controller.motion.xyz
         self.position_label.set(f'Target  X {x:+.3f} m   Y {y:+.3f} m   Z {z:.3f} m')
+
+    def process_input(self, dt, allow_actions=True):
+        actions = self.button_actions.sample(self.buttons, self.settings.buttons, enabled=allow_actions)
+        # Stop wins; Start wins over Reset when stopped and is ignored when active.
+        if 'stop' in actions or ('toggle' in actions and self.controller.active):
+            self.stop_output()
+            return
+        if not self.controller.active and ('start' in actions or 'toggle' in actions):
+            self.start_output()
+            return
+        if 'reset' in actions:
+            if self.reset_target():
+                # Keep MA button edges, but do not move away from home this sample.
+                dt = 0
+        self.controller.tick(self.axes, self.buttons, dt)
 
     def poll(self):
         now = time.monotonic()
@@ -351,6 +415,7 @@ class App:
         try:
             if self.joystick and self.joystick.handle:
                 self.axes, self.buttons = self.joystick.read()
+                learning_sample = self.learning is not None
                 if self.learning:
                     key, before_axes, before_buttons, deadline = self.learning
                     learned = None
@@ -365,7 +430,7 @@ class App:
                     elif now >= deadline:
                         self.learning = None
                         self.status.set('Learning timed out; no mapping changed.')
-                self.controller.tick(self.axes, self.buttons, dt)
+                self.process_input(dt, allow_actions=not learning_sample)
                 if now - self.last_ui > 0.1:
                     self.last_ui = now
                     self.axes_label.set('Axes  ' + '  '.join(f'{i}: {v:+.3f}' for i, v in enumerate(self.axes)))
@@ -390,7 +455,8 @@ class App:
         for key in sorted(self.draft_buttons, key=int):
             mapping = self.draft_buttons[key]
             self.button_table.insert('', 'end', iid=key, text=key,
-                                     values=(mapping.get('press', ''), mapping.get('release', '')))
+                                     values=(BUTTON_ACTIONS[mapping.get('action', 'command')],
+                                             mapping.get('press', ''), mapping.get('release', '')))
 
     def load_button(self, event=None):
         selection = self.button_table.selection()
@@ -398,14 +464,24 @@ class App:
             key = selection[0]
             mapping = self.draft_buttons[key]
             self.button_id.set(key)
+            self.button_action.set(BUTTON_ACTIONS[mapping.get('action', 'command')])
             self.press_command.set(mapping.get('press', ''))
             self.release_command.set(mapping.get('release', ''))
+            self.update_button_editor()
+
+    def update_button_editor(self, event=None):
+        state = 'normal' if self.button_action.get() == BUTTON_ACTIONS['command'] else 'disabled'
+        self.press_entry.configure(state=state)
+        self.release_entry.configure(state=state)
 
     def set_button(self):
         if not self.require_stopped():
             return
         key = self.button_id.get().strip()
-        mapping = {'press': self.press_command.get().strip(), 'release': self.release_command.get().strip()}
+        action = next(key for key, label in BUTTON_ACTIONS.items() if label == self.button_action.get())
+        mapping = {'action': action}
+        if action == 'command':
+            mapping.update(press=self.press_command.get().strip(), release=self.release_command.get().strip())
         draft = dict(self.draft_buttons, **{key: mapping})
         try:
             Settings.from_dict(dict(self.settings.to_dict(), buttons=draft))

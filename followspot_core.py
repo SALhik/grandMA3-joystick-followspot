@@ -8,6 +8,11 @@ import socket
 import struct
 
 
+BUTTON_ACTIONS = {'command': 'MA command', 'start': 'Start output',
+                  'stop': 'Stop output', 'toggle': 'Toggle output',
+                  'reset': 'Reset target'}
+
+
 def clamp(value, low, high):
     return max(low, min(high, value))
 
@@ -28,6 +33,7 @@ class Settings:
     z: float = 1.5
     initial_x: float = 0.0
     initial_y: float = 0.0
+    reset_locked: bool = True
     x_min: float = -10.0
     x_max: float = 10.0
     y_min: float = -10.0
@@ -107,11 +113,16 @@ class Settings:
         for key, mapping in self.buttons.items():
             if not isinstance(key, str) or not key.isascii() or not key.isdecimal() or str(int(key)) != key:
                 raise ValueError('Button IDs must be zero-based whole numbers.')
-            if not isinstance(mapping, dict) or set(mapping) - {'press', 'release'}:
-                raise ValueError('Each button has press and release commands.')
+            if not isinstance(mapping, dict) or set(mapping) - {'action', 'press', 'release'}:
+                raise ValueError('Each button has an action and optional press/release commands.')
+            action = mapping.get('action', 'command')
+            if not isinstance(action, str) or action not in BUTTON_ACTIONS:
+                raise ValueError('Choose a valid button action.')
             for command in mapping.values():
                 if not isinstance(command, str) or '\0' in command or len(command.encode('utf-8')) > 4096:
                     raise ValueError('Button commands must be text up to 4096 bytes with no null characters.')
+            if action != 'command' and any(mapping.get(edge, '').strip() for edge in ('press', 'release')):
+                raise ValueError('Local button actions cannot also send MA commands.')
 
     def save(self, path):
         self.validate()
@@ -218,6 +229,27 @@ class OscSender:
         self.socket.close()
 
 
+class ButtonActions:
+    """Observe local press actions even while OSC output is stopped."""
+    def __init__(self):
+        self.previous = None
+
+    def seed(self, buttons):
+        self.previous = list(buttons)
+
+    def sample(self, buttons, mappings, enabled=True):
+        previous = self.previous
+        self.seed(buttons)
+        if not enabled or previous is None or len(previous) != len(buttons):
+            return []
+        actions = []
+        for index, (old, new) in enumerate(zip(previous, buttons)):
+            action = mappings.get(str(index), {}).get('action', 'command')
+            if new and not old and action != 'command':
+                actions.append(action)
+        return actions
+
+
 class Controller:
     def __init__(self, settings, send):
         settings.validate()
@@ -246,18 +278,38 @@ class Controller:
                 raise RuntimeError(f'{exc}; Release send failed: {"; ".join(errors)}') from exc
             raise
 
-    def _output(self, axes):
+    def _output_position(self):
         commands = marker_commands(self.settings, self.motion.xyz)
         if commands != self.last_commands:
             # Keep selection and XYZ assignments in one OSC command string.
             # MA does not accept OSC bundles.
             self.send('/cmd', '; '.join(commands))
             self.last_commands = commands
+
+    def _output(self, axes):
+        self._output_position()
         level = round(self.motion.brightness(axes), 1)
         if level != self.last_brightness:
             s = self.settings
             self.send(f'/Page{s.executor_page}/Fader{s.executor_number}', level)
             self.last_brightness = level
+
+    def reset_target(self):
+        if self.active and self.settings.reset_locked:
+            return False
+        s = self.settings
+        self.motion.xyz = [s.initial_x, s.initial_y, s.z]
+        if self.active:
+            try:
+                # An explicit Reset also resends a target already at home.
+                self.last_commands = None
+                self._output_position()
+            except Exception as exc:
+                errors = self.stop()
+                if errors:
+                    raise RuntimeError(f'{exc}; Release send failed: {"; ".join(errors)}') from exc
+                raise
+        return True
 
     def tick(self, axes, buttons, dt):
         if not self.active:
@@ -269,6 +321,8 @@ class Controller:
             self._output(axes)
             for index, (old, new) in enumerate(zip(self.previous_buttons, buttons)):
                 mapping = self.settings.buttons.get(str(index), {})
+                if mapping.get('action', 'command') != 'command':
+                    continue
                 if new and not old:
                     # Own every observed press, including release-only mappings.
                     # Buttons held at Start are not observed presses and stay unowned.

@@ -156,6 +156,91 @@ class CoreTests(unittest.TestCase):
             c.tick([0, 0, 1], [True], 0.03)
         self.assertFalse(c.active)
 
+    def test_old_settings_keep_reset_locked_and_accept_command_mappings(self):
+        s = self.settings(buttons={'0': {'press': 'Go+ Sequence 1'}})
+        self.assertTrue(getattr(s, 'reset_locked', False))
+
+    def test_local_action_settings_roundtrip_and_validation(self):
+        s = self.settings(reset_locked=False, buttons={'0': {'action': 'toggle'}})
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'settings.json'
+            s.save(path)
+            self.assertEqual(core.Settings.load(path).to_dict(), s.to_dict())
+        for mapping in ({'action': 'unknown'}, {'action': []},
+                        {'action': 'stop', 'press': 'Go'},
+                        {'action': 'reset', 'release': 'Off'}):
+            with self.subTest(mapping=mapping), self.assertRaises(ValueError):
+                self.settings(buttons={'0': mapping})
+
+    def test_reset_while_stopped_is_local(self):
+        emitted = []
+        c = core.Controller(self.settings(initial_x=2, initial_y=-3),
+                            lambda a, v: emitted.append((a, v)))
+        c.motion.xyz = [5, 6, 1.5]
+        self.assertTrue(c.reset_target())
+        self.assertEqual(c.motion.xyz, [2, -3, 1.5])
+        self.assertEqual(emitted, [])
+
+    def test_live_reset_obeys_lock_and_only_sends_position(self):
+        emitted = []
+        c = core.Controller(self.settings(initial_x=2),
+                            lambda a, v: emitted.append((a, v)))
+        c.start([0, 0, 0], [False])
+        c.motion.xyz = [5, 6, 1.5]
+        emitted.clear()
+        self.assertFalse(c.reset_target())
+        self.assertEqual(c.motion.xyz, [5, 6, 1.5])
+        self.assertEqual(emitted, [])
+        c.settings.reset_locked = False
+        self.assertTrue(c.reset_target())
+        self.assertTrue(c.active)
+        self.assertEqual(c.motion.xyz, [2, 0, 1.5])
+        self.assertEqual(emitted, [('/cmd', 'ClearSelection; MArker 1; '
+                         'Attribute "XYZ_X" At Absolute Percent 51.000000; '
+                         'Attribute "XYZ_Y" At Absolute Percent 50.000000; '
+                         'Attribute "XYZ_Z" At Absolute Percent 50.750000')])
+        self.assertEqual(c.last_brightness, 50)
+
+    def test_live_reset_send_failure_stops_and_releases(self):
+        emitted = []
+        def send(a, v):
+            if v.startswith('ClearSelection') and fail[0]:
+                raise OSError('reset failed')
+            emitted.append((a, v))
+        fail = [False]
+        c = core.Controller(self.settings(reset_locked=False,
+                            buttons={'0': {'press': 'Down', 'release': 'Up'}}),
+                            lambda a, v: send(a, v) if isinstance(v, str) else None)
+        c.start([0, 0, -1], [False])
+        c.tick([0, 0, -1], [True], 0.03)
+        fail[0] = True
+        with self.assertRaisesRegex(OSError, 'reset failed'):
+            c.reset_target()
+        self.assertFalse(c.active)
+        self.assertEqual(emitted[-1], ('/cmd', 'Up'))
+
+    def test_local_buttons_ignore_held_inputs_and_learning(self):
+        actions = core.ButtonActions()
+        mappings = {'0': {'action': 'start'}}
+        self.assertEqual(actions.sample([True], mappings), [])
+        self.assertEqual(actions.sample([False], mappings), [])
+        self.assertEqual(actions.sample([True], mappings, enabled=False), [])
+        self.assertEqual(actions.sample([True], mappings), [])
+        self.assertEqual(actions.sample([False], mappings), [])
+        self.assertEqual(actions.sample([True], mappings), ['start'])
+        self.assertEqual(actions.sample([True], mappings), [])
+        self.assertEqual(actions.sample([False, True], mappings), [])
+
+    def test_local_buttons_do_not_emit_ma_commands(self):
+        emitted = []
+        c = core.Controller(self.settings(buttons={'0': {'action': 'stop'}}),
+                            lambda a, v: emitted.append((a, v)))
+        c.start([0, 0, -1], [False])
+        emitted.clear()
+        c.tick([0, 0, -1], [True], 0.03)
+        c.stop()
+        self.assertEqual(emitted, [])
+
 
 if __name__ == '__main__':
     unittest.main()
