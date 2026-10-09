@@ -536,6 +536,8 @@ def main():
     parser.add_argument('--check-settings', action='store_true', help='Validate settings without opening devices or sending OSC.')
     args = parser.parse_args()
     if args.check_settings:
+        if not args.settings.is_file():
+            raise FileNotFoundError(f'Settings file not found: {args.settings}')
         Settings.load(args.settings).validate()
         print(f'Settings valid: {args.settings}')
         return 0
