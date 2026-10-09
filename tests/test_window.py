@@ -136,6 +136,25 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(app.output_label.get(), 'OUTPUT STOPPED')
         self.assertEqual(app.start_button.state, 'normal')
 
+    def test_mapped_reset_while_stopped_does_not_save_drafts(self):
+        app, _ = self.app(initial_x=1, buttons={'0': {'action': 'reset'}})
+        app.controller.motion.xyz = [4, 5, 1.5]
+        app.values['initial_x'].set('2')
+        app.values['max_speed'].set('5')
+        app.buttons[0] = True
+        app.poll()
+        self.assertEqual(app.controller.motion.xyz, [1, 0, 1.5])
+        saved = Settings.load(app.settings_path)
+        self.assertEqual((saved.initial_x, saved.max_speed), (1, 1))
+        self.assertEqual(app.errors, [])
+
+    def test_window_reset_while_stopped_applies_drafts(self):
+        app, _ = self.app(initial_x=1)
+        app.values['initial_x'].set('2')
+        app.reset_target()
+        self.assertEqual(app.controller.motion.xyz, [2, 0, 1.5])
+        self.assertEqual(Settings.load(app.settings_path).initial_x, 2)
+
     def test_start_without_selected_joystick_explains_selection(self):
         app, messages = self.app()
         app.joystick.handle = None

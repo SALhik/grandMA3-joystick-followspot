@@ -383,11 +383,12 @@ class App:
             self.messagebox.showerror('Could not save reset lock', str(exc))
         self.lock_settings(self.controller.active)
 
-    def reset_target(self):
+    def reset_target(self, apply_drafts=True):
+        """The window button applies edited settings first; a mapped joystick button does not."""
         if self.controller.active and self.settings.reset_locked:
             self.status.set('Reset is locked while running. Unlock it in Live or stop output first.')
             return False
-        if not self.controller.active and not self.apply_settings():
+        if not self.controller.active and apply_drafts and not self.apply_settings():
             return False
         try:
             self.controller.reset_target()
@@ -417,7 +418,7 @@ class App:
         if not self.controller.active and ('start' in actions or 'toggle' in actions):
             self.start_output()
             return
-        if 'reset' in actions and self.reset_target():
+        if 'reset' in actions and self.reset_target(apply_drafts=False):
             # Keep MA button edges, but do not move away from home this sample.
             dt = 0
         self.controller.tick(self.axes, dt, presses, releases)
