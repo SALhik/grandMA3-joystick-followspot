@@ -155,6 +155,18 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(app.controller.motion.xyz, [2, 0, 1.5])
         self.assertEqual(Settings.load(app.settings_path).initial_x, 2)
 
+    def test_apply_saves_settings_even_if_joystick_read_fails(self):
+        app, _ = self.app()
+        app.values['max_speed'].set('3')
+        def disconnected():
+            raise ConnectionError('Joystick disconnected')
+        app.joystick.read = disconnected
+        self.assertTrue(app.apply_settings())
+        self.assertEqual(Settings.load(app.settings_path).max_speed, 3)
+        self.assertEqual(app.settings.max_speed, 3)
+        self.assertIn('could not be read: Joystick disconnected', app.status.get())
+        self.assertFalse(app.joystick.handle)
+
     def test_start_without_selected_joystick_explains_selection(self):
         app, messages = self.app()
         app.joystick.handle = None

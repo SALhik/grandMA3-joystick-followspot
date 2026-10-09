@@ -300,21 +300,24 @@ class App:
             return False
         try:
             settings = settings_from_values(self.values, self.draft_buttons)
-            if self.joystick and self.joystick.handle:
-                self.axes, self.buttons = self.joystick.read()
-            self.button_edges.seed(self.buttons)
             settings.save(self.settings_path)
-            xyz = self.controller.motion.xyz
-            self.settings = settings
-            self.controller = Controller(settings, self.send)
-            self.controller.motion.xyz = [clamp(xyz[0], settings.x_min, settings.x_max),
-                                          clamp(xyz[1], settings.y_min, settings.y_max), settings.z]
-            self.update_position()
-            self.status.set('Settings saved and applied. Output remains stopped.')
-            return True
-        except (OSError, RuntimeError, ValueError) as exc:
+        except (OSError, ValueError) as exc:
             self.messagebox.showerror('Settings', str(exc))
             return False
+        xyz = self.controller.motion.xyz
+        self.settings = settings
+        self.controller = Controller(settings, self.send)
+        self.controller.motion.xyz = [clamp(xyz[0], settings.x_min, settings.x_max),
+                                      clamp(xyz[1], settings.y_min, settings.y_max), settings.z]
+        self.update_position()
+        self.status.set('Settings saved and applied. Output remains stopped.')
+        if self.joystick and self.joystick.handle:
+            try:
+                # New mappings must not act on buttons already held.
+                self.read_snapshot()
+            except (OSError, RuntimeError, ValueError) as exc:
+                self.input_lost(f'Settings saved and applied, but the joystick could not be read: {exc}')
+        return True
 
     def start_output(self):
         if not self.require_stopped():
