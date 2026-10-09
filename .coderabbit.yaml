@@ -1,0 +1,6 @@
+# The project keeps comments to where code cannot speak for itself (AGENTS.md),
+# and most functions in a typical diff are self-describing tests.
+reviews:
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
