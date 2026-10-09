@@ -50,12 +50,13 @@ class CoreTests(unittest.TestCase):
         m.step([1, 0, -1], 0.1)
         self.assertAlmostEqual(m.xyz[0], -0.1)
 
-    def test_stall_and_limits(self):
+    def test_long_gap_moves_at_most_one_capped_step_and_limits_hold(self):
         m = core.Motion(self.settings(initial_x=0.99, x_max=1))
         m.step([1, 0, -1], 0.1)
         self.assertEqual(m.xyz[0], 1)
+        # A throttled or stalled poll keeps moving, but never jumps by the whole gap.
         m.step([-1, 0, -1], 2)
-        self.assertEqual(m.xyz[0], 1)
+        self.assertAlmostEqual(m.xyz[0], 1 - core.MAX_STEP)
 
     def test_slider_endpoints_and_inversion(self):
         m = core.Motion(self.settings())

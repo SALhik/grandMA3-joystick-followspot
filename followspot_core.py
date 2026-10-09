@@ -10,6 +10,8 @@ import struct
 from typing import get_type_hints
 
 
+# Longest sample interval integrated as motion; longer gaps move at most this far.
+MAX_STEP = 0.25
 BUTTON_ACTIONS = {'command': 'MA command', 'start': 'Start output',
                   'stop': 'Stop output', 'toggle': 'Toggle output',
                   'reset': 'Reset target'}
@@ -167,8 +169,7 @@ class Motion:
         s = self.settings
         if not math.isfinite(dt) or dt < 0:
             raise ValueError('Invalid sample interval.')
-        if dt > 0.25:
-            return
+        dt = min(dt, MAX_STEP)
         x = centred_axis(axes[s.axis_x], s.centre_x, s.invert_x)
         y = centred_axis(axes[s.axis_y], s.centre_y, s.invert_y)
         radius = math.hypot(x, y)
