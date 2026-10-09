@@ -1,4 +1,5 @@
 """Validated settings, proportional motion and grandMA3 OSC output."""
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, fields
 import json
 import math
@@ -229,25 +230,34 @@ class OscSender:
         self.socket.close()
 
 
-class ButtonActions:
-    """Observe local press actions even while OSC output is stopped."""
+class ButtonEdges:
+    """The single press/release tracker, observed whether or not output runs.
+
+    Seeding with a fresh snapshot makes buttons already held unobserved until
+    they are released and pressed again.
+    """
     def __init__(self):
         self.previous = None
 
     def seed(self, buttons):
         self.previous = list(buttons)
 
-    def sample(self, buttons, mappings, enabled=True):
+    def sample(self, buttons):
         previous = self.previous
         self.seed(buttons)
-        if not enabled or previous is None or len(previous) != len(buttons):
-            return []
-        actions = []
-        for index, (old, new) in enumerate(zip(previous, buttons)):
-            action = mappings.get(str(index), {}).get('action', 'command')
-            if new and not old and action != 'command':
-                actions.append(action)
-        return actions
+        if previous is None or len(previous) != len(buttons):
+            return [], []
+        presses = [i for i, (old, new) in enumerate(zip(previous, buttons)) if new and not old]
+        releases = [i for i, (old, new) in enumerate(zip(previous, buttons)) if old and not new]
+        return presses, releases
+
+
+def button_action(mappings, index):
+    return mappings.get(str(index), {}).get('action', 'command')
+
+
+def local_actions(presses, mappings):
+    return [action for action in (button_action(mappings, i) for i in presses) if action != 'command']
 
 
 class Controller:
@@ -257,26 +267,29 @@ class Controller:
         self.motion = Motion(settings)
         self.send = send
         self.active = False
-        self.previous_buttons = []
         self.pressed = set()
         self.last_commands = None
         self.last_brightness = None
 
-    def start(self, axes, buttons):
-        self.motion.check_axes(axes)
-        if self.active:
-            raise ValueError('Output is already active.')
-        self.previous_buttons = list(buttons)
-        self.pressed.clear()
-        self.last_commands = self.last_brightness = None
-        self.active = True
+    @contextmanager
+    def _stop_on_failure(self):
         try:
-            self._output(axes)
+            yield
         except Exception as exc:
             errors = self.stop()
             if errors:
                 raise RuntimeError(f'{exc}; Release send failed: {"; ".join(errors)}') from exc
             raise
+
+    def start(self, axes):
+        self.motion.check_axes(axes)
+        if self.active:
+            raise ValueError('Output is already active.')
+        self.pressed.clear()
+        self.last_commands = self.last_brightness = None
+        self.active = True
+        with self._stop_on_failure():
+            self._output(axes)
 
     def _output_position(self):
         commands = marker_commands(self.settings, self.motion.xyz)
@@ -300,47 +313,35 @@ class Controller:
         s = self.settings
         self.motion.xyz = [s.initial_x, s.initial_y, s.z]
         if self.active:
-            try:
+            with self._stop_on_failure():
                 # An explicit Reset also resends a target already at home.
                 self.last_commands = None
                 self._output_position()
-            except Exception as exc:
-                errors = self.stop()
-                if errors:
-                    raise RuntimeError(f'{exc}; Release send failed: {"; ".join(errors)}') from exc
-                raise
         return True
 
-    def tick(self, axes, buttons, dt):
+    def tick(self, axes, dt, presses=(), releases=()):
+        """Move, output, then send MA commands for this sample's button edges."""
         if not self.active:
             return
-        try:
-            if len(buttons) != len(self.previous_buttons):
-                raise ValueError('Joystick button count changed; restart output.')
+        with self._stop_on_failure():
             self.motion.step(axes, dt)
             self._output(axes)
-            for index, (old, new) in enumerate(zip(self.previous_buttons, buttons)):
+            for index in sorted([*presses, *releases]):
                 mapping = self.settings.buttons.get(str(index), {})
-                if mapping.get('action', 'command') != 'command':
-                    continue
-                if new and not old:
+                if index in presses:
+                    if mapping.get('action', 'command') != 'command':
+                        continue
                     # Own every observed press, including release-only mappings.
                     # Buttons held at Start are not observed presses and stay unowned.
                     self.pressed.add(index)
                     command = mapping.get('press', '').strip()
                     if command:
                         self.send('/cmd', command)
-                elif old and not new and index in self.pressed:
+                elif index in self.pressed:
                     command = mapping.get('release', '').strip()
                     if command:
                         self.send('/cmd', command)
                     self.pressed.discard(index)
-            self.previous_buttons = list(buttons)
-        except Exception as exc:
-            errors = self.stop()
-            if errors:
-                raise RuntimeError(f'{exc}; Release send failed: {"; ".join(errors)}') from exc
-            raise
 
     def stop(self):
         self.active = False

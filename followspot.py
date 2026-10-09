@@ -7,7 +7,8 @@ from pathlib import Path
 import sys
 import time
 
-from followspot_core import BUTTON_ACTIONS, ButtonActions, Controller, OscSender, Settings, clamp, learn_axis
+from followspot_core import (BUTTON_ACTIONS, ButtonEdges, Controller, OscSender, Settings, clamp,
+                              learn_axis, local_actions)
 from joystick import Joystick
 
 SETTINGS_PATH = Path(__file__).resolve().with_name('settings.json')
@@ -38,7 +39,7 @@ class App:
         self.controller = None
         self.learning = None
         self.axes, self.buttons = [], []
-        self.button_actions = ButtonActions()
+        self.button_edges = ButtonEdges()
         self.device_choices = []
         self.last_tick = time.monotonic()
         self.last_ui = 0
@@ -222,7 +223,7 @@ class App:
                 self.joystick = Joystick()
             self.joystick.close()
             self.axes, self.buttons = [], []
-            self.button_actions = ButtonActions()
+            self.button_edges = ButtonEdges()
             self.device_choices = self.joystick.devices()
             self.device_box['values'] = [f'{index}: {name}' for index, name in self.device_choices]
             if not self.device_choices:
@@ -251,8 +252,7 @@ class App:
         index, name = self.device_choices[choice]
         try:
             self.joystick.open(index)
-            self.axes, self.buttons = self.joystick.read()
-            self.button_actions.seed(self.buttons)
+            self.read_snapshot()
             self.values['device_name'].set(name)
             self.device_label.set(f'{name} · {len(self.axes)} axes · {len(self.buttons)} buttons')
             self.status.set('Joystick connected. Learn the axes and calibrate the released stick before Start.')
@@ -261,6 +261,11 @@ class App:
             self.axes, self.buttons = [], []
             self.device_label.set('Joystick unavailable')
             self.status.set(str(exc))
+
+    def read_snapshot(self):
+        """Read outside polling; buttons already held stay unobserved until pressed again."""
+        self.axes, self.buttons = self.joystick.read()
+        self.button_edges.seed(self.buttons)
 
     def begin_learn(self, key):
         if not self.require_stopped() or not self.axes:
@@ -291,7 +296,7 @@ class App:
             settings = settings_from_values(self.values, self.draft_buttons)
             if self.joystick and self.joystick.handle:
                 self.axes, self.buttons = self.joystick.read()
-            self.button_actions.seed(self.buttons)
+            self.button_edges.seed(self.buttons)
             settings.save(self.settings_path)
             xyz = self.controller.motion.xyz
             self.settings = settings
@@ -316,9 +321,8 @@ class App:
         try:
             if self.joystick is None:
                 raise ConnectionError('Connect a joystick first.')
-            self.axes, self.buttons = self.joystick.read()
-            # Suppress held local actions even if validation or the first send fails.
-            self.button_actions.seed(self.buttons)
+            # Suppress held buttons even if validation or the first send fails.
+            self.read_snapshot()
             self.controller.motion.check_axes(self.axes)
             invalid_buttons = [key for key in self.settings.buttons if int(key) >= len(self.buttons)]
             if invalid_buttons:
@@ -327,7 +331,7 @@ class App:
                 self.sender.close()
             s = self.settings
             self.sender = OscSender(s.host, s.port, s.prefix)
-            self.controller.start(self.axes, self.buttons)
+            self.controller.start(self.axes)
             self.last_tick = time.monotonic()
             self.output_label.set('OUTPUT RUNNING · OSC sent, reception unconfirmed')
             self.lock_settings(True)
@@ -395,7 +399,12 @@ class App:
         self.position_label.set(f'Target  X {x:+.3f} m   Y {y:+.3f} m   Z {z:.3f} m')
 
     def process_input(self, dt, allow_actions=True):
-        actions = self.button_actions.sample(self.buttons, self.settings.buttons, enabled=allow_actions)
+        if allow_actions:
+            presses, releases = self.button_edges.sample(self.buttons)
+        else:
+            self.button_edges.seed(self.buttons)
+            presses = releases = []
+        actions = local_actions(presses, self.settings.buttons)
         # Stop wins; Start wins over Reset when stopped and is ignored when active.
         if 'stop' in actions or ('toggle' in actions and self.controller.active):
             self.stop_output()
@@ -403,11 +412,10 @@ class App:
         if not self.controller.active and ('start' in actions or 'toggle' in actions):
             self.start_output()
             return
-        if 'reset' in actions:
-            if self.reset_target():
-                # Keep MA button edges, but do not move away from home this sample.
-                dt = 0
-        self.controller.tick(self.axes, self.buttons, dt)
+        if 'reset' in actions and self.reset_target():
+            # Keep MA button edges, but do not move away from home this sample.
+            dt = 0
+        self.controller.tick(self.axes, dt, presses, releases)
 
     def poll(self):
         now = time.monotonic()

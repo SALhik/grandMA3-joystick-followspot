@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 import followspot
-from followspot_core import ButtonActions, Controller, Settings
+from followspot_core import ButtonEdges, Controller, Settings
 
 
 class Value:
@@ -49,8 +49,8 @@ class WindowTests(unittest.TestCase):
         app.values = {key: Value(value) for key, value in app.settings.to_dict().items() if key != 'buttons'}
         app.draft_buttons = dict(app.settings.buttons)
         app.axes, app.buttons = [0, 0, 0], [False] * 3
-        app.button_actions = ButtonActions()
-        app.button_actions.seed(app.buttons)
+        app.button_edges = ButtonEdges()
+        app.button_edges.seed(app.buttons)
         app.sender = None
         messages = []
         app.controller = Controller(app.settings, app.send)
@@ -96,8 +96,8 @@ class WindowTests(unittest.TestCase):
         messages = []
         app.controller = Controller(Settings(buttons={'0': {'press': 'Down', 'release': 'Up'}}),
                                     lambda a, v: messages.append(v))
-        app.controller.start([0, 0, -1], [False])
-        app.controller.tick([0, 0, -1], [True], 0.03)
+        app.controller.start([0, 0, -1])
+        app.controller.tick([0, 0, -1], 0.03, presses=[0])
         closed = []
         app.sender = SimpleNamespace(close=lambda: closed.append(True))
         app.status = Value()
@@ -283,6 +283,7 @@ class WindowTests(unittest.TestCase):
             self.assertFalse(app.controller.active)
             self.assertIsNone(app.sender)
             self.assertEqual(messages, [])
+
 
 
 if __name__ == '__main__':
