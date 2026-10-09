@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Small joystick-to-grandMA3 controller. Run directly or use the launcher."""
 import argparse
-from dataclasses import fields, replace
+from dataclasses import replace
 import json
 from pathlib import Path
 import sys
 import time
 
 from followspot_core import (BUTTON_ACTIONS, ButtonEdges, Controller, OscSender, Settings, clamp,
-                              learn_axis, local_actions)
+                              learn_axis, local_actions, setting_types)
 from joystick import Joystick
 
 SETTINGS_PATH = Path(__file__).resolve().with_name('settings.json')
@@ -16,14 +16,14 @@ SETTINGS_PATH = Path(__file__).resolve().with_name('settings.json')
 
 def settings_from_values(values, buttons):
     data = {}
-    for f in fields(Settings):
-        if f.name == 'buttons':
+    for name, kind in setting_types().items():
+        if name == 'buttons':
             continue
-        value = values[f.name].get()
+        value = values[name].get()
         try:
-            data[f.name] = value if f.type is bool else f.type(value)
+            data[name] = value if kind is bool else kind(value)
         except (ValueError, TypeError):
-            raise ValueError(f'{f.name}: enter a valid {"whole number" if f.type is int else "number"}.') from None
+            raise ValueError(f'{name}: enter a valid {"whole number" if kind is int else "number"}.') from None
     data['buttons'] = buttons
     return Settings.from_dict(data)
 
@@ -57,10 +57,10 @@ class App:
         self.controller = Controller(self.settings, self.send)
         self.draft_buttons = json.loads(json.dumps(self.settings.buttons))
         self.values = {}
-        for f in fields(Settings):
-            if f.name != 'buttons':
-                kind = tk.BooleanVar if f.type is bool else tk.StringVar
-                self.values[f.name] = kind(value=getattr(self.settings, f.name))
+        for name, kind in setting_types().items():
+            if name != 'buttons':
+                variable = tk.BooleanVar if kind is bool else tk.StringVar
+                self.values[name] = variable(value=getattr(self.settings, name))
         self.status = tk.StringVar(value='Output is stopped. Configure the MArker and movement space before starting.')
         self.output_label = tk.StringVar(value='OUTPUT STOPPED')
         self.device_label = tk.StringVar(value='No joystick connected')

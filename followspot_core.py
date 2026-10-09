@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import socket
 import struct
+from typing import get_type_hints
 
 
 BUTTON_ACTIONS = {'command': 'MA command', 'start': 'Start output',
@@ -71,18 +72,18 @@ class Settings:
         return result
 
     def validate(self):
-        for f in fields(self):
-            value = getattr(self, f.name)
-            if f.type is float:
+        for name, kind in setting_types().items():
+            value = getattr(self, name)
+            if kind is float:
                 if isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value):
-                    raise ValueError(f'{f.name} must be a finite number.')
-            elif f.type is int:
+                    raise ValueError(f'{name} must be a finite number.')
+            elif kind is int:
                 if type(value) is not int:
-                    raise ValueError(f'{f.name} must be a whole number.')
-            elif f.type is bool and type(value) is not bool:
-                raise ValueError(f'{f.name} must be true or false.')
-            elif f.type is str and not isinstance(value, str):
-                raise ValueError(f'{f.name} must be text.')
+                    raise ValueError(f'{name} must be a whole number.')
+            elif kind is bool and type(value) is not bool:
+                raise ValueError(f'{name} must be true or false.')
+            elif kind is str and not isinstance(value, str):
+                raise ValueError(f'{name} must be text.')
         if not 0 <= self.dead_zone < 0.9 or not 0 < self.max_speed <= 100:
             raise ValueError('Dead zone must be 0–0.89; maximum speed must be greater than 0 and at most 100 m/s.')
         if any(not -0.9 <= v <= 0.9 for v in (self.centre_x, self.centre_y)):
@@ -136,6 +137,11 @@ class Settings:
     def load(cls, path):
         path = Path(path)
         return cls.from_dict(json.loads(path.read_text(encoding='utf-8'))) if path.exists() else cls()
+
+
+def setting_types():
+    """Resolved field types; unlike Field.type, also correct with string annotations."""
+    return get_type_hints(Settings)
 
 
 def centred_axis(value, centre, invert):
