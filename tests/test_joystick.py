@@ -73,6 +73,18 @@ class JoystickTests(unittest.TestCase):
             with self.assertRaises(ConnectionError):
                 j.open(2)
 
+    def test_same_named_controller_missing_from_sdl_stays_selectable(self):
+        sdl, native, opened = self.backends([(0, 'PXN-2113 Pro')],
+                                            [(0, 'PXN-2113 Pro'), (1, 'PXN-2113 Pro')])
+        with patch.object(joystick, 'SDLJoystick', return_value=sdl), \
+             patch.object(joystick, 'MacHIDJoystick', return_value=native), \
+             patch.object(joystick.sys, 'platform', 'darwin'):
+            j = joystick.Joystick()
+            # Names cannot tell which HID record SDL missed, so list both HID records.
+            self.assertEqual(j.devices(), [(0, 'PXN-2113 Pro'), (1, 'PXN-2113 Pro'), (2, 'PXN-2113 Pro')])
+            j.open(2)
+            self.assertEqual(opened, [('native', 1)])
+
     @unittest.skipUnless(sys.platform == 'darwin', 'macOS HID only')
     def test_native_discovery_lists_only_controller_usages(self):
         j = joystick.MacHIDJoystick()

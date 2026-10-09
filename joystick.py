@@ -1,4 +1,5 @@
 """SDL joystick input plus native macOS HID controllers that SDL does not list."""
+from collections import Counter
 import ctypes as ct
 import ctypes.util
 import os
@@ -310,9 +311,14 @@ class Joystick:
         if sys.platform == 'darwin':
             if self.native is None:
                 self.native = MacHIDJoystick()
-            sdl_names = {name for _, _, name in choices}
-            choices += [(self.native, index, name) for index, name in self.native.devices()
-                        if name not in sdl_names]
+            native = self.native.devices()
+            sdl_counts = Counter(name for _, _, name in choices)
+            native_counts = Counter(name for _, name in native)
+            # SDL gives no physical identity to match against HID records. If HID
+            # sees more controllers with a name than SDL lists, list all of them so
+            # the one SDL missed stays selectable.
+            choices += [(self.native, index, name) for index, name in native
+                        if native_counts[name] > sdl_counts[name]]
         self.choices = choices
         return [(index, name) for index, (_, _, name) in enumerate(choices)]
 

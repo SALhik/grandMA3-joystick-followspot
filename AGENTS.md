@@ -125,8 +125,12 @@ failures; never report skipped or blocked hardware checks as passing.
 
 SDL did not enumerate the physical PXN on the operator's Mac. Native HID lists
 it, and the operator confirmed live input responds. The device list combines
-SDL controllers with native HID controllers whose names SDL did not list, so a
-second controller visible to SDL no longer hides the PXN. The combined listing
+SDL controllers with native HID controllers that SDL did not list, so a second
+controller visible to SDL no longer hides the PXN. SDL2 exposes no physical
+identity to match HID records against, so HID records are matched by name
+count: when HID sees more controllers with a name than SDL lists, every HID
+record with that name is listed, accepting a duplicate entry so none becomes
+unreachable. Identical controllers then need explicit selection. The combined listing
 has fake-backend tests but has not yet been checked with mixed physical devices.
 
 Native discovery filters controller usages and excludes keyboard/mouse
