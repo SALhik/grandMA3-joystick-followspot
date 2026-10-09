@@ -1,3 +1,4 @@
+import json
 import math
 import tempfile
 import unittest
@@ -173,8 +174,15 @@ class CoreTests(unittest.TestCase):
         self.assertFalse(c.active)
 
     def test_old_settings_keep_reset_locked_and_accept_command_mappings(self):
-        s = self.settings(buttons={'0': {'press': 'Go+ Sequence 1'}})
-        self.assertTrue(getattr(s, 'reset_locked', False))
+        data = core.Settings().to_dict()
+        del data['reset_locked']
+        data['buttons'] = {'0': {'press': 'Go+ Sequence 1', 'release': ''}}
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'settings.json'
+            path.write_text(json.dumps(data), encoding='utf-8')
+            s = core.Settings.load(path)
+        self.assertIs(s.reset_locked, True)
+        self.assertEqual(core.button_action(s.buttons, 0), 'command')
 
     def test_local_action_settings_roundtrip_and_validation(self):
         s = self.settings(reset_locked=False, buttons={'0': {'action': 'toggle'}})

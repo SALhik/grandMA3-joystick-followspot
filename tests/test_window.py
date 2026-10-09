@@ -350,6 +350,54 @@ class WindowTests(unittest.TestCase):
             self.assertEqual(messages, [])
 
 
+class FakeJoystick:
+    def __init__(self):
+        self.handle = None
+    def devices(self):
+        return [(0, 'PXN-2113 Pro')]
+    def open(self, index):
+        self.handle = True
+    def read(self):
+        if not self.handle:
+            raise ConnectionError('Select and open a joystick first.')
+        return [0, 0, 0], [False, False]
+    def close(self):
+        self.handle = None
+    def shutdown(self):
+        self.close()
+
+
+class RealWindowTests(unittest.TestCase):
+    """Run the real __init__/build_window wiring when Tk can open a window."""
+    def test_real_window_selects_saved_device_and_runs_output(self):
+        import tkinter as tk
+        try:
+            root = tk.Tk()
+        except tk.TclError as exc:
+            self.skipTest(f'Tk window unavailable: {exc}')
+        root.withdraw()
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        messages, errors = [], []
+        with patch.object(followspot, 'Joystick', FakeJoystick), \
+             patch.object(followspot, 'OscSender', side_effect=lambda *args: Sender(messages)), \
+             patch('tkinter.messagebox.showerror', side_effect=lambda *args: errors.append(args)):
+            app = followspot.App(root, Path(folder.name) / 'settings.json')
+            try:
+                self.assertEqual(app.device_label.get(), 'PXN-2113 Pro · 3 axes · 2 buttons')
+                app.start_output()
+                self.assertEqual(errors, [])
+                self.assertTrue(app.controller.active)
+                self.assertEqual(len(messages), 2)
+                self.assertEqual(str(app.start_button['state']), 'disabled')
+                self.assertEqual(str(app.notebook.tab(1, 'state')), 'disabled')
+                app.poll()
+                app.stop_output()
+                self.assertEqual(str(app.start_button['state']), 'normal')
+                self.assertEqual(str(app.notebook.tab(1, 'state')), 'normal')
+            finally:
+                app.close()
+
 
 if __name__ == '__main__':
     unittest.main()
