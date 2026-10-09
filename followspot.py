@@ -267,6 +267,12 @@ class App:
         self.axes, self.buttons = self.joystick.read()
         self.button_edges.seed(self.buttons)
 
+    def input_lost(self, reason):
+        self.stop_output(reason)
+        self.joystick.close()
+        self.axes, self.buttons = [], []
+        self.device_label.set('Joystick disconnected / unavailable · Refresh to reconnect')
+
     def begin_learn(self, key):
         if not self.require_stopped() or not self.axes:
             self.status.set('Connect a joystick and stop output before learning a control.')
@@ -319,8 +325,8 @@ class App:
         if not self.apply_settings():
             return
         try:
-            if self.joystick is None:
-                raise ConnectionError('Connect a joystick first.')
+            if not (self.joystick and self.joystick.handle):
+                raise ConnectionError('Select a joystick in Controls first; click Refresh after reconnecting it.')
             # Suppress held buttons even if validation or the first send fails.
             self.read_snapshot()
             self.controller.motion.check_axes(self.axes)
@@ -352,8 +358,7 @@ class App:
             self.sender = None
         self.learning = None
         self.output_label.set('OUTPUT STOPPED')
-        if hasattr(self, 'setting_tabs'):
-            self.lock_settings(False)
+        self.lock_settings(False)
         self.status.set(reason + (' Release send failed: ' + '; '.join(errors) if errors else ''))
 
     def lock_settings(self, locked):
@@ -422,7 +427,11 @@ class App:
         dt, self.last_tick = now - self.last_tick, now
         try:
             if self.joystick and self.joystick.handle:
-                self.axes, self.buttons = self.joystick.read()
+                try:
+                    self.axes, self.buttons = self.joystick.read()
+                except (OSError, RuntimeError, ValueError) as exc:
+                    self.input_lost(str(exc))
+                    return
                 learning_sample = self.learning is not None
                 if self.learning:
                     key, before_axes, before_buttons, deadline = self.learning
@@ -438,7 +447,14 @@ class App:
                     elif now >= deadline:
                         self.learning = None
                         self.status.set('Learning timed out; no mapping changed.')
-                self.process_input(dt, allow_actions=not learning_sample)
+                try:
+                    self.process_input(dt, allow_actions=not learning_sample)
+                except Exception as exc:
+                    # Output failures leave the joystick open. The controller has
+                    # already stopped; stop here too so the window cannot show running.
+                    self.stop_output(str(exc))
+                    if not isinstance(exc, (OSError, RuntimeError, ValueError)):
+                        raise
                 if now - self.last_ui > 0.1:
                     self.last_ui = now
                     self.axes_label.set('Axes  ' + '  '.join(f'{i}: {v:+.3f}' for i, v in enumerate(self.axes)))
@@ -450,11 +466,6 @@ class App:
                     except ValueError:
                         self.brightness_label.set('Brightness — choose valid axis mappings')
                     self.update_position()
-        except (OSError, RuntimeError, ValueError) as exc:
-            self.stop_output(str(exc))
-            self.joystick.close()
-            self.axes, self.buttons = [], []
-            self.device_label.set('Joystick disconnected / unavailable · Refresh to reconnect')
         finally:
             self.root.after(33, self.poll)
 

@@ -92,23 +92,57 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(followspot.settings_from_values(values, {}).axis_x, 0)
 
     def test_disconnect_stops_controller_and_closes_sender(self):
-        app = followspot.App.__new__(followspot.App)
-        messages = []
-        app.controller = Controller(Settings(buttons={'0': {'press': 'Down', 'release': 'Up'}}),
-                                    lambda a, v: messages.append(v))
-        app.controller.start([0, 0, -1])
-        app.controller.tick([0, 0, -1], 0.03, presses=[0])
-        closed = []
-        app.sender = SimpleNamespace(close=lambda: closed.append(True))
-        app.status = Value()
-        app.learning = None
-        app.output_label = Value()
-        app.stop_output('Joystick disconnected')
+        app, messages = self.app(buttons={'0': {'press': 'Down', 'release': 'Up'}})
+        app.start_output()
+        app.buttons[0] = True
+        app.poll()
+        def disconnected():
+            raise ConnectionError('Joystick disconnected')
+        app.joystick.read = disconnected
+        app.poll()
         self.assertFalse(app.controller.active)
         self.assertIsNone(app.sender)
-        self.assertEqual(messages[-1], 'Up')
-        self.assertEqual(closed, [True])
+        self.assertEqual(messages[-1], ('/cmd', 'Up'))
+        self.assertTrue(self.sender.closed)
         self.assertEqual(app.output_label.get(), 'OUTPUT STOPPED')
+        self.assertFalse(app.joystick.handle)
+        self.assertIn('disconnected', app.device_label.get())
+
+    def test_output_failure_stops_output_but_keeps_joystick_open(self):
+        app, _ = self.app()
+        app.start_output()
+        self.sender.fail = True
+        app.axes[2] = 0.5
+        app.poll()
+        self.assertFalse(app.controller.active)
+        self.assertIsNone(app.sender)
+        self.assertEqual(app.status.get(), 'send failed')
+        self.assertTrue(app.joystick.handle)
+        self.assertEqual(app.device_label.get(), '')
+        app.start_output()
+        self.assertTrue(app.controller.active)
+        self.assertEqual(app.errors, [])
+
+    def test_unexpected_error_still_stops_window_output(self):
+        app, _ = self.app()
+        app.start_output()
+        def broken(*args):
+            raise TypeError('unexpected')
+        app.controller.motion.step = broken
+        with self.assertRaises(TypeError):
+            app.poll()
+        self.assertFalse(app.controller.active)
+        self.assertIsNone(app.sender)
+        self.assertEqual(app.output_label.get(), 'OUTPUT STOPPED')
+        self.assertEqual(app.start_button.state, 'normal')
+
+    def test_start_without_selected_joystick_explains_selection(self):
+        app, messages = self.app()
+        app.joystick.handle = None
+        app.start_output()
+        self.assertFalse(app.controller.active)
+        self.assertEqual(messages, [])
+        self.assertIn('Select a joystick in Controls', app.errors[-1][1])
 
     def test_mapped_start_and_toggle_work_once_per_press_while_stopped(self):
         app, messages = self.app(buttons={'0': {'action': 'start'}, '1': {'action': 'toggle'}})
