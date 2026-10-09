@@ -1,4 +1,5 @@
 """Validated settings, proportional motion and grandMA3 OSC output."""
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, fields
 import json
 import math
@@ -6,6 +7,14 @@ from pathlib import Path
 import re
 import socket
 import struct
+from typing import get_type_hints
+
+
+# Longest sample interval integrated as motion; longer gaps move at most this far.
+MAX_STEP = 0.25
+BUTTON_ACTIONS = {'command': 'MA command', 'start': 'Start output',
+                  'stop': 'Stop output', 'toggle': 'Toggle output',
+                  'reset': 'Reset target'}
 
 
 def clamp(value, low, high):
@@ -28,6 +37,7 @@ class Settings:
     z: float = 1.5
     initial_x: float = 0.0
     initial_y: float = 0.0
+    reset_locked: bool = True
     x_min: float = -10.0
     x_max: float = 10.0
     y_min: float = -10.0
@@ -64,18 +74,18 @@ class Settings:
         return result
 
     def validate(self):
-        for f in fields(self):
-            value = getattr(self, f.name)
-            if f.type is float:
+        for name, kind in setting_types().items():
+            value = getattr(self, name)
+            if kind is float:
                 if isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value):
-                    raise ValueError(f'{f.name} must be a finite number.')
-            elif f.type is int:
+                    raise ValueError(f'{name} must be a finite number.')
+            elif kind is int:
                 if type(value) is not int:
-                    raise ValueError(f'{f.name} must be a whole number.')
-            elif f.type is bool and type(value) is not bool:
-                raise ValueError(f'{f.name} must be true or false.')
-            elif f.type is str and not isinstance(value, str):
-                raise ValueError(f'{f.name} must be text.')
+                    raise ValueError(f'{name} must be a whole number.')
+            elif kind is bool and type(value) is not bool:
+                raise ValueError(f'{name} must be true or false.')
+            elif kind is str and not isinstance(value, str):
+                raise ValueError(f'{name} must be text.')
         if not 0 <= self.dead_zone < 0.9 or not 0 < self.max_speed <= 100:
             raise ValueError('Dead zone must be 0–0.89; maximum speed must be greater than 0 and at most 100 m/s.')
         if any(not -0.9 <= v <= 0.9 for v in (self.centre_x, self.centre_y)):
@@ -107,11 +117,16 @@ class Settings:
         for key, mapping in self.buttons.items():
             if not isinstance(key, str) or not key.isascii() or not key.isdecimal() or str(int(key)) != key:
                 raise ValueError('Button IDs must be zero-based whole numbers.')
-            if not isinstance(mapping, dict) or set(mapping) - {'press', 'release'}:
-                raise ValueError('Each button has press and release commands.')
+            if not isinstance(mapping, dict) or set(mapping) - {'action', 'press', 'release'}:
+                raise ValueError('Each button has an action and optional press/release commands.')
+            action = mapping.get('action', 'command')
+            if not isinstance(action, str) or action not in BUTTON_ACTIONS:
+                raise ValueError('Choose a valid button action.')
             for command in mapping.values():
                 if not isinstance(command, str) or '\0' in command or len(command.encode('utf-8')) > 4096:
                     raise ValueError('Button commands must be text up to 4096 bytes with no null characters.')
+            if action != 'command' and any(mapping.get(edge, '').strip() for edge in ('press', 'release')):
+                raise ValueError('Local button actions cannot also send MA commands.')
 
     def save(self, path):
         self.validate()
@@ -124,6 +139,11 @@ class Settings:
     def load(cls, path):
         path = Path(path)
         return cls.from_dict(json.loads(path.read_text(encoding='utf-8'))) if path.exists() else cls()
+
+
+def setting_types():
+    """Resolved field types; unlike Field.type, also correct with string annotations."""
+    return get_type_hints(Settings)
 
 
 def centred_axis(value, centre, invert):
@@ -149,8 +169,7 @@ class Motion:
         s = self.settings
         if not math.isfinite(dt) or dt < 0:
             raise ValueError('Invalid sample interval.')
-        if dt > 0.25:
-            return
+        dt = min(dt, MAX_STEP)
         x = centred_axis(axes[s.axis_x], s.centre_x, s.invert_x)
         y = centred_axis(axes[s.axis_y], s.centre_y, s.invert_y)
         radius = math.hypot(x, y)
@@ -218,6 +237,36 @@ class OscSender:
         self.socket.close()
 
 
+class ButtonEdges:
+    """The single press/release tracker, observed whether or not output runs.
+
+    Seeding with a fresh snapshot makes buttons already held unobserved until
+    they are released and pressed again.
+    """
+    def __init__(self):
+        self.previous = None
+
+    def seed(self, buttons):
+        self.previous = list(buttons)
+
+    def sample(self, buttons):
+        previous = self.previous
+        self.seed(buttons)
+        if previous is None or len(previous) != len(buttons):
+            return [], []
+        presses = [i for i, (old, new) in enumerate(zip(previous, buttons)) if new and not old]
+        releases = [i for i, (old, new) in enumerate(zip(previous, buttons)) if old and not new]
+        return presses, releases
+
+
+def button_action(mappings, index):
+    return mappings.get(str(index), {}).get('action', 'command')
+
+
+def local_actions(presses, mappings):
+    return [action for action in (button_action(mappings, i) for i in presses) if action != 'command']
+
+
 class Controller:
     def __init__(self, settings, send):
         settings.validate()
@@ -225,68 +274,81 @@ class Controller:
         self.motion = Motion(settings)
         self.send = send
         self.active = False
-        self.previous_buttons = []
         self.pressed = set()
         self.last_commands = None
         self.last_brightness = None
 
-    def start(self, axes, buttons):
-        self.motion.check_axes(axes)
-        if self.active:
-            raise ValueError('Output is already active.')
-        self.previous_buttons = list(buttons)
-        self.pressed.clear()
-        self.last_commands = self.last_brightness = None
-        self.active = True
+    @contextmanager
+    def _stop_on_failure(self):
         try:
-            self._output(axes)
+            yield
         except Exception as exc:
             errors = self.stop()
             if errors:
                 raise RuntimeError(f'{exc}; Release send failed: {"; ".join(errors)}') from exc
             raise
 
-    def _output(self, axes):
+    def start(self, axes):
+        self.motion.check_axes(axes)
+        if self.active:
+            raise ValueError('Output is already active.')
+        self.pressed.clear()
+        self.last_commands = self.last_brightness = None
+        self.active = True
+        with self._stop_on_failure():
+            self._output(axes)
+
+    def _output_position(self):
         commands = marker_commands(self.settings, self.motion.xyz)
         if commands != self.last_commands:
             # Keep selection and XYZ assignments in one OSC command string.
             # MA does not accept OSC bundles.
             self.send('/cmd', '; '.join(commands))
             self.last_commands = commands
+
+    def _output(self, axes):
+        self._output_position()
         level = round(self.motion.brightness(axes), 1)
         if level != self.last_brightness:
             s = self.settings
             self.send(f'/Page{s.executor_page}/Fader{s.executor_number}', level)
             self.last_brightness = level
 
-    def tick(self, axes, buttons, dt):
+    def reset_target(self):
+        if self.active and self.settings.reset_locked:
+            return False
+        s = self.settings
+        self.motion.xyz = [s.initial_x, s.initial_y, s.z]
+        if self.active:
+            with self._stop_on_failure():
+                # An explicit Reset also resends a target already at home.
+                self.last_commands = None
+                self._output_position()
+        return True
+
+    def tick(self, axes, dt, presses=(), releases=()):
+        """Move, output, then send MA commands for this sample's button edges."""
         if not self.active:
             return
-        try:
-            if len(buttons) != len(self.previous_buttons):
-                raise ValueError('Joystick button count changed; restart output.')
+        with self._stop_on_failure():
             self.motion.step(axes, dt)
             self._output(axes)
-            for index, (old, new) in enumerate(zip(self.previous_buttons, buttons)):
+            for index in sorted([*presses, *releases]):
                 mapping = self.settings.buttons.get(str(index), {})
-                if new and not old:
+                if index in presses:
+                    if mapping.get('action', 'command') != 'command':
+                        continue
                     # Own every observed press, including release-only mappings.
                     # Buttons held at Start are not observed presses and stay unowned.
                     self.pressed.add(index)
                     command = mapping.get('press', '').strip()
                     if command:
                         self.send('/cmd', command)
-                elif old and not new and index in self.pressed:
+                elif index in self.pressed:
                     command = mapping.get('release', '').strip()
                     if command:
                         self.send('/cmd', command)
                     self.pressed.discard(index)
-            self.previous_buttons = list(buttons)
-        except Exception as exc:
-            errors = self.stop()
-            if errors:
-                raise RuntimeError(f'{exc}; Release send failed: {"; ".join(errors)}') from exc
-            raise
 
     def stop(self):
         self.active = False

@@ -1,9 +1,25 @@
+import json
 import math
 import tempfile
 import unittest
 from pathlib import Path
 
 import followspot_core as core
+
+
+class Rig(core.Controller):
+    """Drive the controller from raw button snapshots, as the window does."""
+    def __init__(self, settings, send):
+        super().__init__(settings, send)
+        self.edges = core.ButtonEdges()
+
+    def start(self, axes, buttons):
+        self.edges.seed(buttons)
+        super().start(axes)
+
+    def tick(self, axes, buttons, dt):
+        presses, releases = self.edges.sample(buttons)
+        super().tick(axes, dt, presses, releases)
 
 
 class CoreTests(unittest.TestCase):
@@ -35,12 +51,13 @@ class CoreTests(unittest.TestCase):
         m.step([1, 0, -1], 0.1)
         self.assertAlmostEqual(m.xyz[0], -0.1)
 
-    def test_stall_and_limits(self):
+    def test_long_gap_moves_at_most_one_capped_step_and_limits_hold(self):
         m = core.Motion(self.settings(initial_x=0.99, x_max=1))
         m.step([1, 0, -1], 0.1)
         self.assertEqual(m.xyz[0], 1)
+        # A throttled or stalled poll keeps moving, but never jumps by the whole gap.
         m.step([-1, 0, -1], 2)
-        self.assertEqual(m.xyz[0], 1)
+        self.assertAlmostEqual(m.xyz[0], 1 - core.MAX_STEP)
 
     def test_slider_endpoints_and_inversion(self):
         m = core.Motion(self.settings())
@@ -96,7 +113,7 @@ class CoreTests(unittest.TestCase):
     def test_buttons_emit_edges_and_stop_releases(self):
         emitted = []
         s = self.settings(buttons={"0": {"press": "Flash On Executor 201", "release": "Flash Off Executor 201"}})
-        c = core.Controller(s, lambda address, value: emitted.append((address, value)))
+        c = Rig(s, lambda address, value: emitted.append((address, value)))
         c.start([0, 0, -1], [False])
         emitted.clear()
         c.tick([0, 0, -1], [True], 0.03)
@@ -111,7 +128,7 @@ class CoreTests(unittest.TestCase):
     def test_held_button_at_start_does_not_press_or_release(self):
         emitted = []
         s = self.settings(buttons={"0": {"press": "Go+ Sequence 1", "release": "Off Sequence 1"}})
-        c = core.Controller(s, lambda a, v: emitted.append((a, v)))
+        c = Rig(s, lambda a, v: emitted.append((a, v)))
         c.start([0, 0, -1], [True])
         emitted.clear()
         c.tick([0, 0, -1], [False], 0.03)
@@ -125,7 +142,7 @@ class CoreTests(unittest.TestCase):
                 raise OSError('transport failure')
             emitted.append((a, v))
         s = self.settings(buttons={"0": {"press": "Down", "release": "Up"}})
-        c = core.Controller(s, send)
+        c = Rig(s, send)
         c.start([0, 0, -1], [False])
         c.tick([0, 0, -1], [True], 0.03)
         with self.assertRaises(OSError):
@@ -136,7 +153,7 @@ class CoreTests(unittest.TestCase):
     def test_release_only_mapping_fires_after_a_press(self):
         emitted = []
         s = self.settings(buttons={'0': {'press': '', 'release': 'Go+ Sequence 1'}})
-        c = core.Controller(s, lambda a, v: emitted.append((a, v)))
+        c = Rig(s, lambda a, v: emitted.append((a, v)))
         c.start([0, 0, -1], [False])
         emitted.clear()
         c.tick([0, 0, -1], [True], 0.03)
@@ -149,12 +166,117 @@ class CoreTests(unittest.TestCase):
                 raise OSError('fader transmission failed')
             if v == 'Up':
                 raise OSError('release transmission failed')
-        c = core.Controller(self.settings(buttons={'0': {'press': 'Down', 'release': 'Up'}}), send)
+        c = Rig(self.settings(buttons={'0': {'press': 'Down', 'release': 'Up'}}), send)
         c.start([0, 0, -1], [False])
         c.tick([0, 0, -1], [True], 0.03)
         with self.assertRaisesRegex(RuntimeError, 'Release send failed: release transmission failed'):
             c.tick([0, 0, 1], [True], 0.03)
         self.assertFalse(c.active)
+
+    def test_old_settings_keep_reset_locked_and_accept_command_mappings(self):
+        data = core.Settings().to_dict()
+        del data['reset_locked']
+        data['buttons'] = {'0': {'press': 'Go+ Sequence 1', 'release': ''}}
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'settings.json'
+            path.write_text(json.dumps(data), encoding='utf-8')
+            s = core.Settings.load(path)
+        self.assertIs(s.reset_locked, True)
+        self.assertEqual(core.button_action(s.buttons, 0), 'command')
+
+    def test_local_action_settings_roundtrip_and_validation(self):
+        s = self.settings(reset_locked=False, buttons={'0': {'action': 'toggle'}})
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'settings.json'
+            s.save(path)
+            self.assertEqual(core.Settings.load(path).to_dict(), s.to_dict())
+        for mapping in ({'action': 'unknown'}, {'action': []},
+                        {'action': 'stop', 'press': 'Go'},
+                        {'action': 'reset', 'release': 'Off'}):
+            with self.subTest(mapping=mapping), self.assertRaises(ValueError):
+                self.settings(buttons={'0': mapping})
+
+    def test_reset_while_stopped_is_local(self):
+        emitted = []
+        c = Rig(self.settings(initial_x=2, initial_y=-3),
+                            lambda a, v: emitted.append((a, v)))
+        c.motion.xyz = [5, 6, 1.5]
+        self.assertTrue(c.reset_target())
+        self.assertEqual(c.motion.xyz, [2, -3, 1.5])
+        self.assertEqual(emitted, [])
+
+    def test_live_reset_obeys_lock_and_only_sends_position(self):
+        emitted = []
+        c = Rig(self.settings(initial_x=2),
+                            lambda a, v: emitted.append((a, v)))
+        c.start([0, 0, 0], [False])
+        c.motion.xyz = [5, 6, 1.5]
+        emitted.clear()
+        self.assertFalse(c.reset_target())
+        self.assertEqual(c.motion.xyz, [5, 6, 1.5])
+        self.assertEqual(emitted, [])
+        c.settings.reset_locked = False
+        self.assertTrue(c.reset_target())
+        self.assertTrue(c.active)
+        self.assertEqual(c.motion.xyz, [2, 0, 1.5])
+        self.assertEqual(emitted, [('/cmd', 'ClearSelection; MArker 1; '
+                         'Attribute "XYZ_X" At Absolute Percent 51.000000; '
+                         'Attribute "XYZ_Y" At Absolute Percent 50.000000; '
+                         'Attribute "XYZ_Z" At Absolute Percent 50.750000')])
+        self.assertEqual(c.last_brightness, 50)
+
+    def test_live_reset_send_failure_stops_and_releases(self):
+        emitted = []
+        def send(a, v):
+            if v.startswith('ClearSelection') and fail[0]:
+                raise OSError('reset failed')
+            emitted.append((a, v))
+        fail = [False]
+        c = Rig(self.settings(reset_locked=False,
+                            buttons={'0': {'press': 'Down', 'release': 'Up'}}),
+                            lambda a, v: send(a, v) if isinstance(v, str) else None)
+        c.start([0, 0, -1], [False])
+        c.tick([0, 0, -1], [True], 0.03)
+        fail[0] = True
+        with self.assertRaisesRegex(OSError, 'reset failed'):
+            c.reset_target()
+        self.assertFalse(c.active)
+        self.assertEqual(emitted[-1], ('/cmd', 'Up'))
+
+    def test_local_buttons_ignore_held_inputs_and_learning(self):
+        edges = core.ButtonEdges()
+        mappings = {'0': {'action': 'start'}}
+        def actions(buttons):
+            return core.local_actions(edges.sample(buttons)[0], mappings)
+        self.assertEqual(actions([True]), [])
+        self.assertEqual(actions([False]), [])
+        edges.seed([True])  # A learning sample is observed without acting.
+        self.assertEqual(actions([True]), [])
+        self.assertEqual(actions([False]), [])
+        self.assertEqual(actions([True]), ['start'])
+        self.assertEqual(actions([True]), [])
+        self.assertEqual(actions([False, True]), [])
+
+    def test_ma_commands_keep_button_order_within_a_sample(self):
+        emitted = []
+        c = Rig(self.settings(buttons={'0': {'press': 'On 0', 'release': 'Off 0'},
+                                       '1': {'press': 'On 1', 'release': 'Off 1'}}),
+                lambda a, v: emitted.append(v))
+        c.start([0, 0, -1], [False, False])
+        c.tick([0, 0, -1], [True, False], 0.03)
+        emitted.clear()
+        c.tick([0, 0, -1], [False, True], 0.03)
+        self.assertEqual(emitted, ['Off 0', 'On 1'])
+
+    def test_local_buttons_do_not_emit_ma_commands(self):
+        emitted = []
+        c = Rig(self.settings(buttons={'0': {'action': 'stop'}}),
+                            lambda a, v: emitted.append((a, v)))
+        c.start([0, 0, -1], [False])
+        emitted.clear()
+        c.tick([0, 0, -1], [True], 0.03)
+        c.stop()
+        self.assertEqual(emitted, [])
 
 
 if __name__ == '__main__':

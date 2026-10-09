@@ -29,8 +29,8 @@ current code and Git state, and preserve unrelated operator changes.
 | File | Responsibility |
 | --- | --- |
 | `followspot.py` | Tkinter window, settings editor, device selection/learning, polling, start/stop lifecycle, diagnostic CLI |
-| `followspot_core.py` | Settings validation/persistence, proportional motion, coordinate conversion, OSC encoding/sending, button edges and output controller |
-| `joystick.py` | SDL2 and native macOS HID readers via `ctypes`, normalization and backend selection |
+| `followspot_core.py` | Settings validation/persistence, proportional motion, coordinate conversion, OSC encoding/sending, the button edge tracker and output controller |
+| `joystick.py` | SDL2 and native macOS HID readers via `ctypes`, normalization and the combined device list |
 | `Launch Followspot.command` | Selects a Tk-capable Python and launches the window |
 | `settings.example.json` | Shareable example configuration |
 | `tests/` | Core behavior, device backend, and headless window lifecycle tests |
@@ -69,13 +69,32 @@ failures; never report skipped or blocked hardware checks as passing.
 
 - Output starts stopped. Start applies settings and sends the displayed target
   and current slider level. There is no position or fader feedback from MA.
-- Normal polling is approximately 30 Hz. Suppress duplicate output. Long sample
-  gaps must not cause a large position jump; diagonal speed is capped.
+- Normal polling is approximately 30 Hz. Suppress duplicate output; there is no
+  idle resend (it would retake the console selection and fader). A long sample
+  gap moves at most one `MAX_STEP` (0.25 s) of motion; diagonal speed is capped.
 - Stop retains target/brightness and attempts releases for buttons this
   controller pressed. Held-at-Start buttons must not produce a new press or
   release. Read/send failure stops output; there is no automatic resume.
+- `poll` owns failure classification. A joystick read failure stops output and
+  closes the device. Any failure while processing input or sending OSC stops
+  output and keeps the device open; unexpected exception types are re-raised
+  after stopping so the window never shows running output the controller stopped.
 - Settings changes require stopped output. Release commands must be attempted
   before closing the sender, and release failures must remain visible.
+- The saved `reset_locked` flag defaults to true. Its Live toggle is available
+  while running and saves only that flag, leaving other settings drafts unapplied.
+  Stopped Reset is local; unlocked live Reset immediately resends initial X/Y/Z
+  without changing brightness or stopping output. Deflected input resumes motion
+  on following polls.
+- Button mappings default to MA commands when `action` is absent. Local actions
+  (`start`, `stop`, `toggle`, `reset`) fire on press and cannot include MA commands.
+  The window's single `ButtonEdges` tracker runs whether or not output is active;
+  it routes presses to local actions and passes press/release edges to
+  `Controller.tick`, which owns MA presses. Any joystick read outside `poll` goes
+  through `App.read_snapshot`, which reseeds the tracker so held buttons stay
+  unobserved. Learning samples reseed without acting. Priority and held-button
+  rules are specified for operators in README step 6; keep them. A mapped Reset
+  never applies settings drafts; the window Reset button applies them while stopped.
 - Coordinates are in metres in the script. Convert to percent using the actual
   MArker **Movement Space** bounds, which differ from operating limits and the
   MArker **Target Space**. Defaults are examples, not measured stage geometry.
@@ -104,10 +123,15 @@ failures; never report skipped or blocked hardware checks as passing.
 
 ## Device and environment caveats
 
-SDL did not enumerate the physical PXN on the operator's Mac. The native HID
-fallback now lists it, and the operator confirmed live input responds. The
-wrapper currently chooses native HID only when SDL's device list is empty;
-mixed-controller enumeration is a known limitation.
+SDL did not enumerate the physical PXN on the operator's Mac. Native HID lists
+it, and the operator confirmed live input responds. The device list combines
+SDL controllers with native HID controllers that SDL did not list, so a second
+controller visible to SDL no longer hides the PXN. SDL2 exposes no physical
+identity to match HID records against, so HID records are matched by name
+count: when HID sees more controllers with a name than SDL lists, every HID
+record with that name is listed, accepting a duplicate entry so none becomes
+unreachable. Identical controllers then need explicit selection. The combined listing
+has fake-backend tests but has not yet been checked with mixed physical devices.
 
 Native discovery filters controller usages and excludes keyboard/mouse
 interfaces. Without a scheduled HID run loop, Refresh must reapply matching to
@@ -116,7 +140,8 @@ the required CoreFoundation objects, and release them during cleanup. Respect
 macOS access denials; do not treat an empty SDL list as proof that Input
 Monitoring permission is missing.
 
-Some agent sandboxes deny native Tk window creation, physical HID reads, process
+Some agent sandboxes deny native Tk window creation (the real-window test then
+skips itself), physical HID reads, process
 inspection, UDP operations, or network/GitHub access. Automated tests and packet
 encoding checks cannot establish end-to-end operation. Use a normal macOS
 Terminal and a test show for manual input, OSC reception, marker movement,
@@ -128,7 +153,15 @@ As of 2026-10-08, the operator has observed MA receiving OSC and rejecting the
 old combined selection/attribute commands. The separator fix has regression
 coverage, but successful movement with the corrected syntax still needs operator
 confirmation. An earlier “Select and open a joystick first” report was not
-reproduced; do not claim its underlying cause is resolved without evidence.
+reproduced. One plausible cause was fixed on 2026-10-09: an OSC send failure
+used to close the joystick, so the next Start showed that message. Do not
+claim the report is resolved without operator evidence.
+
+Automated coverage: core motion/configuration/OSC-packet tests, simulated SDL
+input/disconnect, native HID discovery and combined-list tests with doubles,
+headless window lifecycle tests, and one real Tk window test that skips when Tk
+cannot open a window. MA's installed 2.5 system tests confirm the `XYZ_X`,
+`XYZ_Y`, `XYZ_Z`, and `XYZ_MArker` attribute names.
 
 Keep changes compact and follow existing style. Update README for operator-facing
 changes and this guide when architecture, workflows, or known limitations change.

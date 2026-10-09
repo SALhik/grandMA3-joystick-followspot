@@ -10,7 +10,7 @@ For AI agents and contributors modifying this project, start with [AGENTS.md](AG
 
 Double-click **Launch Followspot.command** in this folder. It selects a Python with Tk support and opens the settings window. Output starts **stopped** every time.
 
-On this Mac, Python 3.12 with Tk and SDL2 are installed. No Apple developer account, Python package installation, or app signing is needed. The reader uses native macOS HID if SDL does not find the joystick. If macOS opens the launcher as text, run it from Terminal:
+No Apple developer account, Python package installation, or app signing is needed. The reader uses native macOS HID if SDL does not find the joystick. If macOS opens the launcher as text, run it from Terminal:
 
 ```sh
 cd ~/joystick-followspot
@@ -27,7 +27,7 @@ SDL2 is found in the standard Homebrew or framework locations. A custom library 
 
 ### Joystick detection or access errors
 
-If SDL does not list the joystick, the reader automatically lists controller devices through macOS HID and opens only the selected joystick. Keyboard/mouse interfaces are excluded. This avoids confusing an SDL detection failure with a disconnected USB device.
+The joystick list combines SDL controllers with macOS HID controllers that SDL does not list, and opens only the selected joystick. Keyboard/mouse interfaces are excluded. This avoids confusing an SDL detection failure with a disconnected USB device.
 
 If the window says **macOS denied input access**, the controller was detected but could not be opened. Check **System Settings → Privacy & Security → Input Monitoring** for the app launching Python (for example Terminal, iTerm, or Python), then quit/relaunch that app if you choose to permit access. The script does not change permissions or bypass a denial. A restricted/sandboxed terminal may still be unable to read the device. Do not grant permissions solely for an empty list; use the explicit error to identify an access failure.
 
@@ -62,9 +62,9 @@ MA's references: [XYZ activation](https://help.malighting.com/grandMA3/2.5/HTML/
 1. In **Controls**, select the PXN joystick. Click **Refresh** after connecting/reconnecting it.
 2. Use **Learn** beside X, Y, and Brightness. Move only the intended control after clicking. Axis numbers start at zero. The initial 0/1/2 mappings are placeholders; a flight stick's slider may be axis 3 rather than 2.
 3. Release the stick and click **Calibrate centre**. Set inversion, dead zone and maximum speed. Default speed is 1 m/s; a half deflection beyond the dead zone moves at half the maximum speed. Diagonal travel has the same maximum speed as horizontal/vertical travel.
-4. In **Target / stage**, enter the MArker CID, Z height, operating limits and initial X/Y. Operating limits restrict your joystick travel and may be smaller than the full movement space. **Reset target** changes the script's displayed position while stopped; it sends that position when you next Start.
+4. In **Target / stage**, enter the MArker CID, Z height, operating limits and initial X/Y. Operating limits restrict your joystick travel and may be smaller than the full movement space. **Reset target** returns to the initial X/Y and configured Z. While stopped, this is local; Start sends that position. The window button first saves and applies edited settings; a joystick button mapped to Reset uses the last applied settings and never saves edits. In **Live**, **Lock reset while running** is enabled by default. Uncheck it to allow an immediate reset during output, retaining brightness and keeping output running. The lock can be changed while running and is saved immediately, without applying other settings drafts. Centre the stick if you want to hold the reset position; a deflected stick continues movement on subsequent polls.
 5. In **OSC**, set the host/port/prefix and brightness executor page/number. Default marker attribute library names are `XYZ_X`, `XYZ_Y`, `XYZ_Z`; confirm using `List Attribute` if your fixture library differs.
-6. In **Buttons**, click **Learn button**, press the desired button, enter commands, and click **Set mapping**. Then **Save / apply settings**. Examples:
+6. In **Buttons**, click **Learn button**, press the desired button, and choose **Action on press**. Choose **MA command** to enter press/release commands, or **Start output**, **Stop output**, **Toggle output**, or **Reset target** to control this program. Click **Set mapping**, then **Save / apply settings**. MA command examples:
 
    | Action | Press | Release |
    | --- | --- | --- |
@@ -72,18 +72,20 @@ MA's references: [XYZ activation](https://help.malighting.com/grandMA3/2.5/HTML/
    | Run a macro | `Go+ Macro 5` | empty |
    | Held flash | `Flash On Executor 1.202` | `Flash Off Executor 1.202` |
 
-   Commands execute as entered. Buttons fire once per transition. A button already held when you Start is ignored until it is released and pressed again. Default button mappings are empty.
+   Commands execute as entered. MA commands are sent only while output runs. Local actions fire once per press; Start and Toggle can start output while stopped, and Reset obeys the same Live lock as the window button. Each mapping chooses one action; local actions do not also send MA press/release commands. Stop performs the same button-release cleanup as the window button.
+
+   For simultaneous local presses, Stop takes priority. While stopped, Start takes priority over Reset. Start is ignored when already running; Toggle acts as Stop when running and Start when stopped. A button already held when you connect, apply settings or Start is ignored until it is released and pressed again, including after a failed Start. Learning suppresses local actions, including the press that completes learning. Default button mappings are empty.
 7. Save/apply. Check **Live** for the target and slider level, then click **Start output**. Start also applies/saves the currently displayed settings. It immediately sends the displayed target and current brightness; it does not read the fixture's existing position or fader level from onPC.
 
-Settings are saved to `settings.json` beside the script. To share an example configuration, use `settings.example.json`; it is not loaded automatically. Stop before editing settings. While output runs, settings tabs are disabled.
+Settings are saved to `settings.json` beside the script. To share an example configuration, use `settings.example.json`; it is not loaded automatically. Existing settings load without migration: missing `reset_locked` defaults to `true`, and button mappings without `action` remain MA commands. New local mappings use an action such as `"0": {"action": "toggle"}`; valid actions are `command`, `start`, `stop`, `toggle` and `reset`. Stop before editing settings. While output runs, settings tabs are disabled; the reset lock remains available in Live.
 
 ## Stop and restart
 
 **Stop** sends release commands for buttons this tool pressed, stops transmitting, and keeps the current target in memory. It does not clear the programmer, release the MArker, blackout the lights, or move them home. Resume with Start. Closing the window attempts button releases and stops output.
 
-On disconnect or read/send failure, output stops and does not resume automatically. Reconnect, Refresh, then Start. Relaunching the script restores your saved initial X/Y and Z; review those before enabling.
+On a joystick disconnect or read failure, output stops and the joystick is closed: reconnect, Refresh, then Start. On an OSC send failure, output stops but the joystick stays selected: correct the network problem shown in the status, then Start. Output never resumes automatically. Relaunching the script restores your saved initial X/Y and Z; review those before enabling.
 
-The script uses best-effort UDP OSC with no acknowledgement or position feedback. The status means packets were sent, not that onPC received or accepted them. It sends changed coordinates at approximately 30 Hz and suppresses duplicate values. If a packet is lost, a held target may remain at the previous received position until another position is sent; press Stop/Start to resend the displayed target. Lost button-release packets may require a manual release command in onPC.
+The script uses best-effort UDP OSC with no acknowledgement or position feedback. The status means packets were sent, not that onPC received or accepted them. It sends changed coordinates at approximately 30 Hz and suppresses duplicate values; it deliberately does not resend while idle, because each resend reselects the MArker and would force the executor fader back to the slider level. If the window's updates are delayed (for example by a modal dialog or macOS throttling a background app), each late update moves at most a quarter-second of travel instead of jumping. If a packet is lost, a held target may remain at the previous received position until another position is sent; press Stop/Start to resend the displayed target. Lost button-release packets may require a manual release command in onPC.
 
 MArker command input uses the programmer and can change the console's selection/attribute context. Each position update sends separate commands in one OSC string: `ClearSelection; MArker <CID>; Attribute "XYZ_X" At Absolute Percent <value>; ...`. Selection must be separate from attribute assignment; combining them as `MArker 1 Attribute ...` is rejected by onPC. During dedicated followspot operation, avoid concurrent programmer work that relies on preserving the selection. Buttons that affect selection are followed by explicit MArker targeting on the next position update. If you need independent programming alongside followspot operation, a later PSN implementation or separate onPC station/user may be more suitable.
 
@@ -100,4 +102,4 @@ python3 -m unittest discover -s tests -v
 
 The CLI input monitor does not need Tk. The normal Homebrew Python can run it even if it lacks `_tkinter`.
 
-Development verification: core motion/configuration/OSC-packet tests, simulated SDL joystick input/disconnect tests, native HID discovery/fallback tests, and headless window lifecycle tests pass. The updated native detector lists the connected **PXN-2113 Pro** in this session; its device-open call reports **0xe00002e2 (not permitted)** inside the sandbox. MA's installed 2.5 system tests confirm the `XYZ_X`, `XYZ_Y`, `XYZ_Z`, and `XYZ_MArker` attribute names. The agent sandbox cannot create a native Tk window, bind UDP loopback sockets, or read the physical joystick. Physical input, visual UI layout, OSC reception, movement smoothness and real fixture aiming therefore require a normal macOS launch and an onPC test show before show use.
+Automated tests cannot prove end-to-end operation. Before show use, check physical input, OSC reception, movement smoothness and real fixture aiming from a normal macOS launch with an onPC test show. Development checks and their limits are described in [AGENTS.md](AGENTS.md).

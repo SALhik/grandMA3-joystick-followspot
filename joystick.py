@@ -1,4 +1,5 @@
-"""SDL joystick input with a native macOS HID fallback."""
+"""SDL joystick input plus native macOS HID controllers that SDL does not list."""
+from collections import Counter
 import ctypes as ct
 import ctypes.util
 import os
@@ -281,9 +282,13 @@ class MacHIDJoystick:
 
 
 class Joystick:
-    """Prefer SDL; select native Mac HID if SDL does not list any controller."""
+    """List SDL controllers plus native Mac HID controllers that SDL did not name.
+
+    Each listed index maps to one backend; that backend is used once opened.
+    """
     def __init__(self):
         self.native = None
+        self.choices = []
         try:
             self.sdl = SDLJoystick()
         except (RuntimeError, OSError):
@@ -301,25 +306,28 @@ class Joystick:
         return self.backend.handle if self.backend else None
 
     def devices(self):
-        # Keep an open device's backend, including its disconnect state.
-        if self.handle:
-            return self.backend.devices()
-        devices = self.sdl.devices() if self.sdl else []
-        if devices:
-            self.backend = self.sdl
-            return devices
+        # Re-enumerating also lets SDL notice that an open device was detached.
+        choices = [(self.sdl, index, name) for index, name in self.sdl.devices()] if self.sdl else []
         if sys.platform == 'darwin':
             if self.native is None:
                 self.native = MacHIDJoystick()
-            self.backend = self.native
-            return self.native.devices()
-        self.backend = self.sdl
-        return []
+            native = self.native.devices()
+            sdl_counts = Counter(name for _, _, name in choices)
+            native_counts = Counter(name for _, name in native)
+            # SDL gives no physical identity to match against HID records. If HID
+            # sees more controllers with a name than SDL lists, list all of them so
+            # the one SDL missed stays selectable.
+            choices += [(self.native, index, name) for index, name in native
+                        if native_counts[name] > sdl_counts[name]]
+        self.choices = choices
+        return [(index, name) for index, (_, _, name) in enumerate(choices)]
 
     def open(self, index):
-        if self.backend is None:
-            self.devices()
-        self.backend.open(index)
+        if not 0 <= index < len(self.choices):
+            raise ConnectionError('Joystick list changed. Click Refresh and select it again.')
+        self.close()
+        self.backend, backend_index, _ = self.choices[index]
+        self.backend.open(backend_index)
 
     def read(self):
         if self.backend is None:

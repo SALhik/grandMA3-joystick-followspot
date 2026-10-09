@@ -34,18 +34,56 @@ class JoystickTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             joystick.normalize_hid_axis(0, 0, 0)
 
-    def test_empty_sdl_list_falls_back_to_native_device(self):
+    def backends(self, sdl_devices, native_devices):
         # These doubles stand in for OS APIs; the actual wrapper policy is tested.
-        sdl = SimpleNamespace(handle=None, lib=None, devices=lambda: [], shutdown=lambda: None)
-        native = SimpleNamespace(handle=None, devices=lambda: [(0, 'PXN-2113 Pro')],
-                                 read=lambda: ([0, 0, -1], [False]), shutdown=lambda: None)
+        opened = []
+        def backend(label, devices):
+            b = SimpleNamespace(handle=None, lib=None, devices=lambda: devices,
+                                read=lambda: (label, b.handle), close=lambda: None, shutdown=lambda: None)
+            def open_device(index):
+                b.handle = index
+                opened.append((label, index))
+            b.open = open_device
+            return b
+        return backend('sdl', sdl_devices), backend('native', native_devices), opened
+
+    def test_empty_sdl_list_falls_back_to_native_device(self):
+        sdl, native, opened = self.backends([], [(0, 'PXN-2113 Pro')])
         with patch.object(joystick, 'SDLJoystick', return_value=sdl), \
              patch.object(joystick, 'MacHIDJoystick', return_value=native), \
              patch.object(joystick.sys, 'platform', 'darwin'):
             j = joystick.Joystick()
             self.assertEqual(j.devices(), [(0, 'PXN-2113 Pro')])
-            self.assertEqual(j.read(), ([0, 0, -1], [False]))
+            j.open(0)
+            self.assertEqual(j.read(), ('native', 0))
             j.shutdown()
+
+    def test_native_controller_is_listed_beside_other_sdl_controllers(self):
+        sdl, native, opened = self.backends([(0, 'Gamepad')], [(0, 'Gamepad'), (1, 'PXN-2113 Pro')])
+        with patch.object(joystick, 'SDLJoystick', return_value=sdl), \
+             patch.object(joystick, 'MacHIDJoystick', return_value=native), \
+             patch.object(joystick.sys, 'platform', 'darwin'):
+            j = joystick.Joystick()
+            # The SDL-named Gamepad is not listed twice.
+            self.assertEqual(j.devices(), [(0, 'Gamepad'), (1, 'PXN-2113 Pro')])
+            j.open(1)
+            self.assertEqual(j.read(), ('native', 1))
+            j.open(0)
+            self.assertEqual(opened, [('native', 1), ('sdl', 0)])
+            with self.assertRaises(ConnectionError):
+                j.open(2)
+
+    def test_same_named_controller_missing_from_sdl_stays_selectable(self):
+        sdl, native, opened = self.backends([(0, 'PXN-2113 Pro')],
+                                            [(0, 'PXN-2113 Pro'), (1, 'PXN-2113 Pro')])
+        with patch.object(joystick, 'SDLJoystick', return_value=sdl), \
+             patch.object(joystick, 'MacHIDJoystick', return_value=native), \
+             patch.object(joystick.sys, 'platform', 'darwin'):
+            j = joystick.Joystick()
+            # Names cannot tell which HID record SDL missed, so list both HID records.
+            self.assertEqual(j.devices(), [(0, 'PXN-2113 Pro'), (1, 'PXN-2113 Pro'), (2, 'PXN-2113 Pro')])
+            j.open(2)
+            self.assertEqual(opened, [('native', 1)])
 
     @unittest.skipUnless(sys.platform == 'darwin', 'macOS HID only')
     def test_native_discovery_lists_only_controller_usages(self):
@@ -76,6 +114,8 @@ class JoystickTests(unittest.TestCase):
         index = lib.SDL_JoystickAttachVirtual(1, 3, 2, 0)
         self.assertGreaterEqual(index, 0)
         try:
+            # SDL devices are listed first, so the SDL index is also the list index.
+            j.devices()
             j.open(index)
             lib.SDL_JoystickSetVirtualAxis(j.handle, 0, 32767)
             lib.SDL_JoystickSetVirtualAxis(j.handle, 2, -32768)
