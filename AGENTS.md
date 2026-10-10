@@ -12,6 +12,9 @@ Preserve these agreed requirements when maintaining the project:
   radial dead zone. Returning to centre holds the current target position.
 - The target is one moving grandMA3 **MArker**. Z is a configurable fixed height.
 - A joystick slider controls absolute brightness through an executor fader.
+- An optional separate axis controls zoom/iris fader **speed**, with its own
+  centre, dead zone, inversion and maximum speed. `Motion.zoom_level` tracks
+  0–100%; centre holds it. MA configures the zoom/iris sequence and Temp fader.
 - Buttons have editable press/release command mappings.
 - A small Tkinter window lets the operator learn axes/buttons, calibrate,
   change settings, and save them between launches.
@@ -68,8 +71,8 @@ failures; never report skipped or blocked hardware checks as passing.
 
 ## Integration contracts
 
-- Output starts stopped. Start applies settings and sends the displayed target
-  and current slider level. There is no position or fader feedback from MA.
+- Output starts stopped. Start applies settings and sends the displayed target,
+  current slider level and enabled zoom/iris level. There is no position or fader feedback from MA.
 - Normal polling is approximately 30 Hz. Suppress duplicate output; there is no
   idle resend (it would retake the console selection and fader). A long sample
   gap moves at most one `MAX_STEP` (0.25 s) of motion; diagonal speed is capped.
@@ -86,8 +89,15 @@ failures; never report skipped or blocked hardware checks as passing.
 - The saved `reset_locked` flag defaults to true. Its Live toggle is available
   while running and saves only that flag, leaving other settings drafts unapplied.
   Stopped Reset is local; unlocked live Reset immediately resends initial X/Y/Z
-  without changing brightness or stopping output. Deflected input resumes motion
-  on following polls.
+  and enabled initial zoom/iris level without changing brightness or stopping
+  output. Deflected input resumes motion on following polls.
+- Zoom/iris is disabled in old settings by default; only enabled mappings require
+  a fourth, distinct axis and an executor different from brightness. Start sends
+  its tracked level; changed levels send at 0.1% resolution with no idle resend.
+  Save/apply and Stop/Start preserve the tracked level, even if initial_zoom is
+  edited; Reset/relaunch use initial_zoom. The same MAX_STEP caps integration.
+  A mapped Reset uses applied settings and skips both X/Y and zoom integration
+  for that sample. Brightness is never reset.
 - Button mappings default to MA commands when `action` is absent. Local actions
   (`start`, `stop`, `toggle`, `reset`) fire on press and cannot include MA commands.
   The window's single `ButtonEdges` tracker runs whether or not output is active;
@@ -113,7 +123,10 @@ failures; never report skipped or blocked hardware checks as passing.
   with `ClearAll`, which would discard programmer values.
 - Brightness sends a float in 0–100 to `/Page<page>/Fader<executor>`; MA's
   `FaderRange` must be 100 and the executor's fader must be a Master.
-- An optional prefix is applied consistently to both OSC addresses.
+- Zoom/iris uses the same OSC fader address format with its own page/number;
+  the operator configures a zoom-only or iris-only sequence with a Temp fader.
+  Actual zoom/iris movement still requires operator confirmation in a test show.
+- An optional prefix is applied consistently to all OSC addresses.
 - UDP send success does not prove reception or command acceptance. In MA,
   enable global **Input**, row **Receive** and **Receive Command**, and use
   **EchoInput** plus System Monitor for reception checks. EchoOutput concerns

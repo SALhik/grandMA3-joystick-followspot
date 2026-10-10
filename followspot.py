@@ -66,6 +66,7 @@ class App:
         self.device_label = tk.StringVar(value='No joystick connected')
         self.position_label = tk.StringVar()
         self.brightness_label = tk.StringVar(value='Brightness —')
+        self.zoom_label = tk.StringVar()
         self.axes_label = tk.StringVar(value='Axes —')
         self.buttons_label = tk.StringVar(value='Buttons —')
         self.build_window()
@@ -90,21 +91,23 @@ class App:
         controls = ttk.Frame(notebook, padding=16)
         target = ttk.Frame(notebook, padding=16)
         network = ttk.Frame(notebook, padding=16)
+        zoom = ttk.Frame(notebook, padding=16)
         mappings = ttk.Frame(notebook, padding=16)
         test = ttk.Frame(notebook, padding=16)
         for tab, name in [(live, 'Live'), (controls, 'Controls'), (target, 'Target / stage'),
-                          (network, 'OSC'), (mappings, 'Buttons'), (test, 'Test')]:
+                          (zoom, 'Zoom / iris'), (network, 'OSC'), (mappings, 'Buttons'), (test, 'Test')]:
             notebook.add(tab, text=name)
-        self.setting_tabs = [controls, target, network, mappings, test]
+        self.setting_tabs = [controls, target, zoom, network, mappings, test]
         for variable, font in [(self.output_label, ('Helvetica', 17, 'bold')),
                                (self.device_label, None), (self.position_label, ('Menlo', 16)),
-                               (self.brightness_label, ('Helvetica', 15)), (self.axes_label, ('Menlo', 11)),
+                               (self.brightness_label, ('Helvetica', 15)), (self.zoom_label, ('Helvetica', 15)),
+                               (self.axes_label, ('Menlo', 11)),
                                (self.buttons_label, ('Menlo', 11))]:
             options = {'textvariable': variable, 'wraplength': 770}
             if font:
                 options['font'] = font
             ttk.Label(live, **options).pack(anchor='w', pady=9)
-        ttk.Label(live, text='Position shows the script’s target, not feedback from onPC.\nStart applies settings and sends this target and the current slider level.',
+        ttk.Label(live, text='Position and zoom/iris show tracked values, not feedback from onPC.\nStart sends these values and the current brightness slider level.',
                   wraplength=760).pack(anchor='w', pady=15)
         bar = ttk.Frame(live)
         bar.pack(anchor='w', pady=8)
@@ -113,11 +116,11 @@ class App:
         self.test_button = ttk.Button(bar, text='Start test (figure 8)', command=lambda: self.start_output(test=True))
         self.test_button.pack(side='left', padx=(0, 10))
         ttk.Button(bar, text='Stop output', command=self.stop_output).pack(side='left', padx=(0, 10))
-        self.reset_button = ttk.Button(bar, text='Reset target', command=self.reset_target)
+        self.reset_button = ttk.Button(bar, text='Reset target + zoom/iris', command=self.reset_target)
         self.reset_button.pack(side='left')
         ttk.Checkbutton(live, text='Lock reset while running', variable=self.values['reset_locked'],
                         command=self.set_reset_lock).pack(anchor='w', pady=4)
-        ttk.Label(live, text='Unlocked Reset immediately sends the initial target while running; brightness is retained.',
+        ttk.Label(live, text='Unlocked Reset sends the initial target and zoom/iris level; brightness is retained.',
                   wraplength=740).pack(anchor='w', pady=4)
         device_bar = ttk.Frame(controls)
         device_bar.grid(row=0, column=0, columnspan=4, sticky='ew', pady=(0, 10))
@@ -141,6 +144,20 @@ class App:
         ttk.Button(controls, text='Calibrate centre (release the stick first)', command=self.calibrate).grid(row=row, column=0, columnspan=4, sticky='w', pady=8)
         ttk.Label(controls, text='Learn: click Learn, then move only that control. Axis/button numbers start at 0.\nChanges take effect when you save/apply settings or Start output.',
                   wraplength=740).grid(row=row+1, column=0, columnspan=4, sticky='w', pady=10)
+        ttk.Checkbutton(zoom, text='Enable zoom / iris axis', variable=self.values['zoom_enabled']).grid(row=0, column=0, columnspan=4, sticky='w', pady=(0, 10))
+        self.entry(zoom, 1, 'Zoom / iris axis', 'axis_zoom', width=8)
+        ttk.Button(zoom, text='Learn', command=lambda: self.begin_learn('axis_zoom')).grid(row=1, column=2, padx=8)
+        ttk.Checkbutton(zoom, text='Invert', variable=self.values['invert_zoom']).grid(row=1, column=3, sticky='w')
+        for row, (key, label) in enumerate([
+                ('zoom_speed', 'Maximum speed (percentage points/s)'),
+                ('zoom_dead_zone', 'Centre dead zone (0–0.89)'), ('centre_zoom', 'Axis centre'),
+                ('initial_zoom', 'Initial / reset level (0–100%)'),
+                ('zoom_executor_page', 'Executor page'), ('zoom_executor_number', 'Executor number')], 2):
+            self.entry(zoom, row, label, key)
+        ttk.Button(zoom, text='Calibrate zoom / iris centre (release control first)',
+                   command=self.calibrate_zoom).grid(row=8, column=0, columnspan=4, sticky='w', pady=8)
+        ttk.Label(zoom, text='Centre holds the tracked level; deflection changes it faster as you move farther.\nIn onPC, configure a separate zoom-only or iris-only sequence with a Temp fader.\nUse FaderRange 100. The script sends fader levels, not fixture attributes.',
+                  wraplength=740).grid(row=9, column=0, columnspan=4, sticky='w', pady=10)
         self.entry(target, 0, 'MArker CID', 'marker_id')
         self.entry(target, 1, 'Z height (m)', 'z')
         ttk.Label(target, text='Operating limits (m) — smaller than or equal to the movement space').grid(row=2, column=0, columnspan=6, sticky='w', pady=10)
@@ -305,6 +322,21 @@ class App:
         except (ValueError, IndexError) as exc:
             self.status.set(str(exc))
 
+    def calibrate_zoom(self):
+        if not self.require_stopped() or not self.axes:
+            return
+        try:
+            axis = int(self.values['axis_zoom'].get())
+            if not 0 <= axis < len(self.axes):
+                raise ValueError('Choose a valid zoom/iris axis first.')
+            centre = self.axes[axis]
+            if not -0.9 <= centre <= 0.9:
+                raise ValueError('Release the zoom/iris control before calibrating.')
+            self.values['centre_zoom'].set(f'{centre:.6f}')
+            self.status.set('Zoom/iris centre captured. Save / apply settings to use it.')
+        except (ValueError, IndexError) as exc:
+            self.status.set(str(exc))
+
     def apply_settings(self):
         if not self.require_stopped():
             return False
@@ -315,10 +347,12 @@ class App:
             self.messagebox.showerror('Settings', str(exc))
             return False
         xyz = self.controller.motion.xyz
+        zoom_level = self.controller.motion.zoom_level
         self.settings = settings
         self.controller = Controller(settings, self.send)
         self.controller.motion.xyz = [clamp(xyz[0], settings.x_min, settings.x_max),
                                       clamp(xyz[1], settings.y_min, settings.y_max), settings.z]
+        self.controller.motion.zoom_level = zoom_level
         self.update_position()
         self.status.set('Settings saved and applied. Output remains stopped.')
         if self.joystick and self.joystick.handle:
@@ -356,7 +390,7 @@ class App:
             self.output_label.set(('TEST RUNNING (figure 8)' if test else 'OUTPUT RUNNING') + ' · OSC sent, reception unconfirmed')
             self.lock_settings(True)
             self.status.set('Test running: the marker traces a figure 8; the joystick is ignored. Stop ends it.' if test else
-                            'Output running. Stick controls speed; centre holds position. Stop retains target and brightness.')
+                            'Output running. Centre holds position and zoom/iris. Stop retains tracked levels.')
         except (OSError, RuntimeError, ValueError) as exc:
             self.stop_output(str(exc))
             self.messagebox.showerror('Could not start output', str(exc))
@@ -366,7 +400,7 @@ class App:
             raise OSError('OSC output is not connected.')
         self.sender.send(address, value)
 
-    def stop_output(self, reason='Output stopped. Position and brightness are retained in onPC.'):
+    def stop_output(self, reason='Output stopped. Position, brightness and zoom/iris are retained.'):
         if self.controller.test:
             # The joystick is not read during a test; do not act on stale button state.
             self.button_edges = ButtonEdges()
@@ -395,7 +429,7 @@ class App:
             settings.save(self.settings_path)
             self.settings.reset_locked = settings.reset_locked
             self.status.set('Reset is locked while running.' if settings.reset_locked else
-                            'Reset is unlocked: it can immediately send the initial target while running.')
+                            'Reset is unlocked: it can send the initial target and zoom/iris level while running.')
         except (OSError, ValueError) as exc:
             self.values['reset_locked'].set(self.settings.reset_locked)
             self.messagebox.showerror('Could not save reset lock', str(exc))
@@ -411,8 +445,8 @@ class App:
         try:
             self.controller.reset_target()
             self.update_position()
-            self.status.set('Initial target sent. Output continues; brightness is retained.' if self.controller.active else
-                            'Target reset locally. Start will send this position to onPC.')
+            self.status.set('Initial target and zoom/iris sent. Output continues; brightness is retained.' if self.controller.active else
+                            'Target and zoom/iris reset locally. Start will send them to onPC.')
             return True
         except (OSError, RuntimeError, ValueError) as exc:
             self.stop_output(str(exc))
@@ -421,6 +455,8 @@ class App:
     def update_position(self):
         x, y, z = self.controller.motion.xyz
         self.position_label.set(f'Target  X {x:+.3f} m   Y {y:+.3f} m   Z {z:.3f} m')
+        self.zoom_label.set(f'Zoom / iris  {self.controller.motion.zoom_level:.1f}%' if self.settings.zoom_enabled else
+                            'Zoom / iris  disabled')
 
     def process_input(self, dt, allow_actions=True):
         if allow_actions:

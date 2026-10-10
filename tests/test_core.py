@@ -22,6 +22,112 @@ class Rig(core.Controller):
         super().tick(axes, dt, presses, releases)
 
 
+class ZoomTests(unittest.TestCase):
+    def settings(self, **changes):
+        return core.Settings.from_dict(dict(core.Settings().to_dict(), zoom_enabled=True, **changes))
+
+    def test_old_settings_need_no_fourth_axis_or_extra_output(self):
+        s = core.Settings.from_dict({'axis_slider': 3})
+        self.assertFalse(s.zoom_enabled)
+        emitted = []
+        c = core.Controller(s, lambda a, v: emitted.append((a, v)))
+        c.start([0, 0, 0, -1])
+        c.tick([0, 0, 0, -1], 0.1)
+        self.assertEqual(len(emitted), 2)
+
+    def test_deflection_controls_zoom_speed_and_centre_holds(self):
+        m = core.Motion(self.settings())
+        m.step([0, 0, -1, 0.55], 0.2)
+        self.assertAlmostEqual(m.zoom_level, 55)
+        m.step([0, 0, -1, 0.05], 0.2)
+        self.assertAlmostEqual(m.zoom_level, 55)
+        m.step([0, 0, -1, -1], 0.2)
+        self.assertAlmostEqual(m.zoom_level, 45)
+
+    def test_zoom_calibration_inversion_limits_and_capped_gap(self):
+        m = core.Motion(self.settings(centre_zoom=0.2, invert_zoom=True, initial_zoom=5))
+        m.step([0, 0, -1, 0.2], 0.1)
+        self.assertEqual(m.zoom_level, 5)
+        m.step([0, 0, -1, 1], 0.2)
+        self.assertEqual(m.zoom_level, 0)
+        m.step([0, 0, -1, -1], 10)
+        self.assertAlmostEqual(m.zoom_level, 12.5)
+        m.zoom_level = 99
+        m.step([0, 0, -1, -1], 0.2)
+        self.assertEqual(m.zoom_level, 100)
+
+    def test_zoom_configuration_validation_and_roundtrip(self):
+        for changes in ({'axis_zoom': 2}, {'axis_zoom': -1}, {'centre_zoom': 1},
+                        {'zoom_dead_zone': 0.9}, {'zoom_dead_zone': -0.1},
+                        {'zoom_speed': 0}, {'zoom_speed': float('nan')},
+                        {'initial_zoom': 101}, {'initial_zoom': -1},
+                        {'zoom_executor_page': 0}, {'zoom_executor_number': 0},
+                        {'zoom_executor_number': 201}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                self.settings(**changes)
+        s = self.settings(axis_zoom=4, initial_zoom=20, zoom_executor_page=2)
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'settings.json'
+            s.save(path)
+            self.assertEqual(core.Settings.load(path).to_dict(), s.to_dict())
+        c = core.Controller(s, lambda *args: None)
+        with self.assertRaisesRegex(ValueError, 'axis range'):
+            c.start([0, 0, 0, 0])
+        self.assertFalse(c.active)
+
+    def test_zoom_sends_tracked_level_suppresses_idle_and_retains_on_restart(self):
+        emitted = []
+        c = core.Controller(self.settings(zoom_executor_page=2, zoom_executor_number=205),
+                            lambda a, v: emitted.append((a, v)))
+        c.start([0, 0, -1, 1])
+        self.assertEqual(emitted[-1], ('/Page2/Fader205', 50))
+        emitted.clear()
+        c.tick([0, 0, -1, 1], 0.1)
+        c.tick([0, 0, -1, 0], 0.1)
+        self.assertEqual(emitted, [('/Page2/Fader205', 55)])
+        c.stop()
+        c.tick([0, 0, -1, 1], 0.1)
+        c.start([0, 0, -1, 0])
+        self.assertEqual(emitted[-1], ('/Page2/Fader205', 55))
+
+    def test_reset_restores_zoom_locally_and_live_obeying_lock(self):
+        emitted = []
+        c = core.Controller(self.settings(initial_zoom=30), lambda a, v: emitted.append((a, v)))
+        c.motion.zoom_level = 70
+        self.assertTrue(c.reset_target())
+        self.assertEqual(c.motion.zoom_level, 30)
+        self.assertEqual(emitted, [])
+        c.start([0, 0, -1, 0])
+        c.motion.zoom_level = 70
+        emitted.clear()
+        self.assertFalse(c.reset_target())
+        self.assertEqual(c.motion.zoom_level, 70)
+        self.assertEqual(emitted, [])
+        c.settings.reset_locked = False
+        self.assertTrue(c.reset_target())
+        self.assertEqual(c.motion.zoom_level, 30)
+        self.assertEqual([a for a, v in emitted], ['/cmd', '/Page1/Fader202'])
+        self.assertEqual(emitted[-1][1], 30)
+        self.assertTrue(c.active)
+        emitted.clear()
+        c.reset_target()  # Explicit Reset resends even an unchanged level.
+        self.assertEqual(emitted[-1], ('/Page1/Fader202', 30))
+
+    def test_zoom_send_failure_stops_and_releases_buttons(self):
+        emitted = []
+        def send(a, v):
+            if a == '/Page1/Fader202' and v != 50:
+                raise OSError('zoom send failed')
+            emitted.append((a, v))
+        c = core.Controller(self.settings(buttons={'0': {'press': 'Down', 'release': 'Up'}}), send)
+        c.start([0, 0, -1, 0])
+        c.tick([0, 0, -1, 0], 0.1, presses=[0])
+        with self.assertRaisesRegex(OSError, 'zoom send failed'):
+            c.tick([0, 0, -1, 1], 0.1)
+        self.assertFalse(c.active)
+        self.assertEqual(emitted[-1], ('/cmd', 'Up'))
+
+
 class CoreTests(unittest.TestCase):
     def settings(self, **changes):
         data = core.Settings().to_dict()

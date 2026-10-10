@@ -27,6 +27,15 @@ class Settings:
     axis_x: int = 0
     axis_y: int = 1
     axis_slider: int = 2
+    zoom_enabled: bool = False
+    axis_zoom: int = 3
+    invert_zoom: bool = False
+    centre_zoom: float = 0.0
+    zoom_dead_zone: float = 0.1
+    zoom_speed: float = 50.0
+    initial_zoom: float = 50.0
+    zoom_executor_page: int = 1
+    zoom_executor_number: int = 202
     invert_x: bool = False
     invert_y: bool = True
     invert_slider: bool = False
@@ -95,6 +104,18 @@ class Settings:
             raise ValueError('Calibrate with the stick near its centre.')
         if min(self.axis_x, self.axis_y, self.axis_slider) < 0 or len({self.axis_x, self.axis_y, self.axis_slider}) != 3:
             raise ValueError('Select three different, non-negative axis numbers.')
+        if self.axis_zoom < 0 or (self.zoom_enabled and self.axis_zoom in (self.axis_x, self.axis_y, self.axis_slider)):
+            raise ValueError('Choose a separate, non-negative zoom/iris axis.')
+        if not -0.9 <= self.centre_zoom <= 0.9:
+            raise ValueError('Calibrate with the zoom/iris control near its centre.')
+        if not 0 <= self.zoom_dead_zone < 0.9 or not 0 < self.zoom_speed <= 1000:
+            raise ValueError('Zoom/iris dead zone must be 0–0.89; speed must be greater than 0 and at most 1000 percentage points/s.')
+        if not 0 <= self.initial_zoom <= 100:
+            raise ValueError('Initial zoom/iris level must be 0–100%.')
+        if min(self.zoom_executor_page, self.zoom_executor_number) < 1:
+            raise ValueError('Zoom/iris executor page and number must be positive.')
+        if self.zoom_enabled and (self.zoom_executor_page, self.zoom_executor_number) == (self.executor_page, self.executor_number):
+            raise ValueError('Zoom/iris and brightness must use different executors.')
         for axis in ('x', 'y', 'z'):
             lo, hi = getattr(self, f'space_{axis}_min'), getattr(self, f'space_{axis}_max')
             if lo >= hi:
@@ -161,10 +182,14 @@ class Motion:
     def __init__(self, settings):
         self.settings = settings
         self.xyz = [settings.initial_x, settings.initial_y, settings.z]
+        self.zoom_level = settings.initial_zoom
 
     def check_axes(self, axes):
         s = self.settings
-        if max(s.axis_x, s.axis_y, s.axis_slider) >= len(axes):
+        mappings = [s.axis_x, s.axis_y, s.axis_slider]
+        if s.zoom_enabled:
+            mappings.append(s.axis_zoom)
+        if max(mappings) >= len(axes):
             raise ValueError('An axis mapping is outside the connected joystick’s axis range.')
         if any(not isinstance(v, (float, int)) or not math.isfinite(v) for v in axes):
             raise ValueError('Joystick reported an invalid axis value.')
@@ -183,6 +208,10 @@ class Motion:
             self.xyz[0] = clamp(self.xyz[0] + x / radius * speed * dt, s.x_min, s.x_max)
             self.xyz[1] = clamp(self.xyz[1] + y / radius * speed * dt, s.y_min, s.y_max)
         self.xyz[2] = s.z
+        if s.zoom_enabled:
+            value = centred_axis(axes[s.axis_zoom], s.centre_zoom, s.invert_zoom)
+            speed = max(0.0, min(1.0, (abs(value) - s.zoom_dead_zone) / (1 - s.zoom_dead_zone))) * s.zoom_speed
+            self.zoom_level = clamp(self.zoom_level + math.copysign(speed, value) * dt, 0, 100)
 
     def brightness(self, axes):
         self.check_axes(axes)
@@ -291,6 +320,7 @@ class Controller:
         self.pressed = set()
         self.last_commands = None
         self.last_brightness = None
+        self.last_zoom = None
 
     @contextmanager
     def _stop_on_failure(self):
@@ -312,7 +342,7 @@ class Controller:
         if test:
             self.motion.xyz = figure_eight(self.settings, 0)
         self.pressed.clear()
-        self.last_commands = self.last_brightness = None
+        self.last_commands = self.last_brightness = self.last_zoom = None
         self.active = True
         with self._stop_on_failure():
             self._output(axes)
@@ -332,17 +362,29 @@ class Controller:
             s = self.settings
             self.send(f'/Page{s.executor_page}/Fader{s.executor_number}', level)
             self.last_brightness = level
+        self._output_zoom()
+
+    def _output_zoom(self):
+        s = self.settings
+        if s.zoom_enabled:
+            level = round(self.motion.zoom_level, 1)
+            if level != self.last_zoom:
+                self.send(f'/Page{s.zoom_executor_page}/Fader{s.zoom_executor_number}', level)
+                self.last_zoom = level
 
     def reset_target(self):
         if self.active and self.settings.reset_locked:
             return False
         s = self.settings
         self.motion.xyz = [s.initial_x, s.initial_y, s.z]
+        self.motion.zoom_level = s.initial_zoom
         if self.active:
             with self._stop_on_failure():
                 # An explicit Reset also resends a target already at home.
                 self.last_commands = None
                 self._output_position()
+                self.last_zoom = None
+                self._output_zoom()
         return True
 
     def tick(self, axes, dt, presses=(), releases=()):

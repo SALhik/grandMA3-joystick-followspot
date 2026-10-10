@@ -54,7 +54,7 @@ class WindowTests(unittest.TestCase):
         app.sender = None
         messages = []
         app.controller = Controller(app.settings, app.send)
-        for name in ('status', 'output_label', 'position_label', 'brightness_label',
+        for name in ('status', 'output_label', 'position_label', 'brightness_label', 'zoom_label',
                      'axes_label', 'buttons_label', 'device_label', 'button_id',
                      'press_command', 'release_command'):
             setattr(app, name, Value())
@@ -81,6 +81,86 @@ class WindowTests(unittest.TestCase):
         sender_patch.start()
         self.addCleanup(sender_patch.stop)
         return app, messages
+
+    def test_zoom_level_survives_apply_stop_and_restart(self):
+        app, messages = self.app(zoom_enabled=True)
+        app.axes.append(0)
+        app.controller.motion.zoom_level = 65
+        app.values['initial_zoom'].set('20')
+        app.start_output()
+        self.assertTrue(app.controller.active)
+        self.assertEqual(messages[-1], ('/Page1/Fader202', 65))
+        app.stop_output()
+        app.apply_settings()
+        app.start_output()
+        self.assertEqual(messages[-1], ('/Page1/Fader202', 65))
+        self.assertIn('65.0%', app.zoom_label.get())
+
+    def test_zoom_centre_calibration_uses_selected_axis(self):
+        app, _ = self.app(zoom_enabled=True)
+        app.axes.append(0.15)
+        app.calibrate_zoom()
+        self.assertAlmostEqual(float(app.values['centre_zoom'].get()), 0.15)
+        app.values['axis_zoom'].set('8')
+        app.calibrate_zoom()
+        self.assertAlmostEqual(float(app.values['centre_zoom'].get()), 0.15)
+        self.assertIn('valid', app.status.get())
+
+    def test_zoom_axis_learning_does_not_change_tracked_level(self):
+        app, messages = self.app(zoom_enabled=True)
+        app.axes.append(0)
+        app.begin_learn('axis_zoom')
+        app.axes[3] = 0.7
+        app.poll()
+        self.assertEqual(app.values['axis_zoom'].get(), '3')
+        self.assertIsNone(app.learning)
+        self.assertEqual(app.controller.motion.zoom_level, 50)
+        self.assertEqual(messages, [])
+
+    def test_mapped_live_reset_resets_zoom_without_moving_in_same_sample(self):
+        app, messages = self.app(zoom_enabled=True, initial_zoom=25, reset_locked=False,
+                                 buttons={'0': {'action': 'reset'}})
+        app.axes.append(0)
+        app.start_output()
+        app.controller.motion.zoom_level = 80
+        app.values['initial_zoom'].set('90')
+        app.axes[3] = 1
+        app.buttons[0] = True
+        app.process_input(0.1)
+        self.assertEqual(app.controller.motion.zoom_level, 25)
+        self.assertEqual(messages[-1], ('/Page1/Fader202', 25))
+        self.assertIn('25.0%', app.zoom_label.get())
+        app.process_input(0.1)
+        self.assertEqual(messages[-1], ('/Page1/Fader202', 30))
+
+    def test_window_stopped_reset_applies_zoom_initial_draft(self):
+        app, messages = self.app(zoom_enabled=True)
+        app.axes.append(0)
+        app.controller.motion.zoom_level = 80
+        app.values['initial_zoom'].set('35')
+        app.reset_target()
+        self.assertEqual(app.controller.motion.zoom_level, 35)
+        self.assertEqual(Settings.load(app.settings_path).initial_zoom, 35)
+        self.assertEqual(messages, [])
+
+    def test_zoom_failure_during_live_reset_keeps_device_and_closes_sender(self):
+        app, messages = self.app(zoom_enabled=True, reset_locked=False,
+                                 buttons={'0': {'press': 'Down', 'release': 'Up'}})
+        app.axes.append(0)
+        app.start_output()
+        app.buttons[0] = True
+        app.process_input(0.1)
+        def fail_zoom(a, v):
+            if a == '/Page1/Fader202':
+                raise OSError('zoom failed')
+            messages.append((a, v))
+        self.sender.send = fail_zoom
+        app.reset_target()
+        self.assertFalse(app.controller.active)
+        self.assertEqual(messages[-1], ('/cmd', 'Up'))
+        self.assertTrue(app.joystick.handle)
+        self.assertTrue(self.sender.closed)
+        self.assertIn('zoom failed', app.status.get())
 
     def test_settings_parse_rejects_invalid_numeric_input(self):
         s = Settings()
@@ -393,6 +473,40 @@ class FakeJoystick:
 
 class RealWindowTests(unittest.TestCase):
     """Run the real __init__/build_window wiring when Tk can open a window."""
+    def test_real_window_zoom_tab_learns_calibrates_and_resets(self):
+        import tkinter as tk
+        try:
+            root = tk.Tk()
+        except tk.TclError as exc:
+            self.skipTest(f'Tk window unavailable: {exc}')
+        root.withdraw()
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        path = Path(folder.name) / 'settings.json'
+        Settings(zoom_enabled=True, reset_locked=False, initial_zoom=25).save(path)
+        class ZoomJoystick(FakeJoystick):
+            def read(self):
+                axes, buttons = super().read()
+                return axes + [0.2], buttons
+        messages, errors = [], []
+        with patch.object(followspot, 'Joystick', ZoomJoystick), \
+             patch.object(followspot, 'OscSender', side_effect=lambda *args: Sender(messages)), \
+             patch('tkinter.messagebox.showerror', side_effect=lambda *args: errors.append(args)):
+            app = followspot.App(root, path)
+            try:
+                self.assertIn('Zoom / iris', [app.notebook.tab(tab, 'text') for tab in app.notebook.tabs()])
+                app.calibrate_zoom()
+                app.start_output()
+                self.assertEqual(errors, [])
+                self.assertTrue(app.controller.active)
+                self.assertEqual(messages[-1], ('/Page1/Fader202', 25))
+                app.controller.motion.zoom_level = 60
+                app.reset_button.invoke()
+                self.assertEqual(messages[-1], ('/Page1/Fader202', 25))
+                self.assertIn('25.0%', app.zoom_label.get())
+            finally:
+                app.close()
+
     def test_real_window_selects_saved_device_and_runs_output(self):
         import tkinter as tk
         try:
