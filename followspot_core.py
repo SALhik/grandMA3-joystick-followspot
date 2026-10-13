@@ -38,6 +38,9 @@ class Settings:
     initial_x: float = 0.0
     initial_y: float = 0.0
     reset_locked: bool = True
+    test_size: float = 2.0
+    test_period: float = 20.0
+    test_brightness: float = 100.0
     x_min: float = -10.0
     x_max: float = 10.0
     y_min: float = -10.0
@@ -103,6 +106,8 @@ class Settings:
                     raise ValueError(f'{axis.upper()} operating limits and initial position must fit inside the movement space.')
             elif not lo <= self.z <= hi:
                 raise ValueError('Z height must fit inside the Z movement space.')
+        if not 0 < self.test_size <= 100 or not 2 <= self.test_period <= 600 or not 0 <= self.test_brightness <= 100:
+            raise ValueError('Test size must be 0–100 m, period 2–600 s and brightness 0–100%.')
         if min(self.marker_id, self.executor_page, self.executor_number) < 1 or not 1 <= self.port <= 65535:
             raise ValueError('IDs must be positive; OSC port must be 1–65535.')
         if not self.host.strip() or any(c.isspace() for c in self.host) or '\0' in self.host:
@@ -183,6 +188,13 @@ class Motion:
         self.check_axes(axes)
         v = clamp((axes[self.settings.axis_slider] + 1) * 50, 0, 100)
         return 100 - v if self.settings.invert_slider else v
+
+
+def figure_eight(s, t):
+    """Test-mode target: a figure 8 centred on the initial X/Y, kept inside the operating limits."""
+    phase = 2 * math.pi * t / s.test_period
+    return [clamp(s.initial_x + s.test_size * math.sin(phase), s.x_min, s.x_max),
+            clamp(s.initial_y + s.test_size / 2 * math.sin(2 * phase), s.y_min, s.y_max), s.z]
 
 
 def learn_axis(before, after, threshold=0.3):
@@ -274,6 +286,8 @@ class Controller:
         self.motion = Motion(settings)
         self.send = send
         self.active = False
+        self.test = False
+        self.test_time = 0.0
         self.pressed = set()
         self.last_commands = None
         self.last_brightness = None
@@ -288,10 +302,15 @@ class Controller:
                 raise RuntimeError(f'{exc}; Release send failed: {"; ".join(errors)}') from exc
             raise
 
-    def start(self, axes):
-        self.motion.check_axes(axes)
+    def start(self, axes=None, test=False):
+        """Test mode needs no joystick: it drives a figure 8 at a fixed brightness."""
+        if not test:
+            self.motion.check_axes(axes)
         if self.active:
             raise ValueError('Output is already active.')
+        self.test, self.test_time = test, 0.0
+        if test:
+            self.motion.xyz = figure_eight(self.settings, 0)
         self.pressed.clear()
         self.last_commands = self.last_brightness = None
         self.active = True
@@ -308,7 +327,7 @@ class Controller:
 
     def _output(self, axes):
         self._output_position()
-        level = round(self.motion.brightness(axes), 1)
+        level = round(self.settings.test_brightness if self.test else self.motion.brightness(axes), 1)
         if level != self.last_brightness:
             s = self.settings
             self.send(f'/Page{s.executor_page}/Fader{s.executor_number}', level)
@@ -331,7 +350,11 @@ class Controller:
         if not self.active:
             return
         with self._stop_on_failure():
-            self.motion.step(axes, dt)
+            if self.test:
+                self.test_time += min(max(dt, 0), MAX_STEP)
+                self.motion.xyz = figure_eight(self.settings, self.test_time)
+            else:
+                self.motion.step(axes, dt)
             self._output(axes)
             for index in sorted([*presses, *releases]):
                 mapping = self.settings.buttons.get(str(index), {})

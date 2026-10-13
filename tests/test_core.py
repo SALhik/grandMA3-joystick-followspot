@@ -39,6 +39,34 @@ class CoreTests(unittest.TestCase):
         slow.step([0.05, 0, -1], 0.1)
         self.assertAlmostEqual(slow.xyz[0], 0.05)
 
+    def test_figure_eight_is_centred_closed_and_inside_limits(self):
+        s = self.settings(initial_x=1, initial_y=-1, test_size=2, test_period=10, x_max=2)
+        self.assertEqual(core.figure_eight(s, 0), [1, -1, s.z])
+        self.assertAlmostEqual(core.figure_eight(s, 10)[1], -1)
+        points = [core.figure_eight(s, t / 10) for t in range(100)]
+        self.assertTrue(all(p[0] <= 2 for p in points))
+        self.assertGreater(max(p[1] for p in points), -1)
+        self.assertLess(min(p[1] for p in points), -1)
+
+    def test_test_mode_runs_without_axes_and_holds_test_brightness(self):
+        sent = []
+        c = core.Controller(self.settings(test_brightness=60, test_period=10),
+                            lambda address, value: sent.append((address, value)))
+        c.start(test=True)
+        self.assertEqual(sent[-1], ('/Page1/Fader201', 60.0))
+        self.assertEqual(c.motion.xyz[:2], [0, 0])
+        c.tick((), core.MAX_STEP)
+        self.assertNotEqual(c.motion.xyz[:2], [0, 0])
+        self.assertTrue(any(a == '/cmd' for a, _ in sent[2:]))
+        self.assertEqual(sum(1 for a, _ in sent if a.startswith('/Page')), 1)
+
+    def test_test_settings_are_validated_and_old_files_still_load(self):
+        for bad in ({'test_size': 0}, {'test_period': 1}, {'test_brightness': 101}):
+            with self.assertRaises(ValueError):
+                self.settings(**bad)
+        legacy = {k: v for k, v in core.Settings().to_dict().items() if not k.startswith('test_')}
+        self.assertEqual(core.Settings.from_dict(legacy).test_period, 20.0)
+
     def test_diagonal_speed_is_capped(self):
         m = core.Motion(self.settings(dead_zone=0, invert_y=False))
         m.step([1, 1, -1], 0.1)

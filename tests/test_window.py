@@ -59,7 +59,7 @@ class WindowTests(unittest.TestCase):
                      'press_command', 'release_command'):
             setattr(app, name, Value())
         app.button_action = Value('MA command')
-        for name in ('start_button', 'reset_button', 'save_button', 'press_entry', 'release_entry'):
+        for name in ('start_button', 'test_button', 'reset_button', 'save_button', 'press_entry', 'release_entry'):
             setattr(app, name, Widget())
         app.setting_tabs = ['controls', 'target', 'network', 'mappings']
         app.notebook = SimpleNamespace(tab=lambda *args, **kwargs: None, select=lambda *args: None)
@@ -107,6 +107,30 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(app.output_label.get(), 'OUTPUT STOPPED')
         self.assertFalse(app.joystick.handle)
         self.assertIn('disconnected', app.device_label.get())
+
+    def test_test_mode_needs_no_joystick_and_ignores_it(self):
+        app, messages = self.app(test_period=10)
+        app.joystick = None
+        app.start_output(test=True)
+        self.assertTrue(app.controller.active and app.controller.test)
+        self.assertEqual(app.errors, [])
+        self.assertIn('TEST', app.output_label.get())
+        app.last_tick -= 0.2
+        app.poll()
+        self.assertNotEqual(app.controller.motion.xyz[:2], [0, 0])
+        app.stop_output()
+        self.assertFalse(app.controller.active)
+        self.assertEqual(app.output_label.get(), 'OUTPUT STOPPED')
+        self.assertTrue(self.sender.closed)
+
+    def test_test_mode_send_failure_stops_output(self):
+        app, _ = self.app()
+        app.start_output(test=True)
+        self.sender.fail = True
+        app.last_tick -= 0.2
+        app.poll()
+        self.assertFalse(app.controller.active)
+        self.assertEqual(app.status.get(), 'send failed')
 
     def test_output_failure_stops_output_but_keeps_joystick_open(self):
         app, _ = self.app()

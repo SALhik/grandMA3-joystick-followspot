@@ -33,6 +33,8 @@ If the window says **macOS denied input access**, the controller was detected bu
 
 ## Configure onPC
 
+**Step-by-step guide with every command: [docs/GRANDMA3_SETUP.md](docs/GRANDMA3_SETUP.md).** The summary below covers the same ground more briefly.
+
 Use a test show first. The script does not edit your showfile automatically.
 
 1. Patch the real lights and enter their accurate positions and orientations in the stage. Enable **XYZ = Yes** for the fixture type's used DMX mode in **Patch → Fixture Types → Edit**. Accurate patch geometry is necessary for physical aiming.
@@ -78,6 +80,10 @@ MA's references: [XYZ activation](https://help.malighting.com/grandMA3/2.5/HTML/
 7. Save/apply. Check **Live** for the target and slider level, then click **Start output**. Start also applies/saves the currently displayed settings. It immediately sends the displayed target and current brightness; it does not read the fixture's existing position or fader level from onPC.
 
 Settings are saved to `settings.json` beside the script. To share an example configuration, use `settings.example.json`; it is not loaded automatically. Existing settings load without migration: missing `reset_locked` defaults to `true`, and button mappings without `action` remain MA commands. New local mappings use an action such as `"0": {"action": "toggle"}`; valid actions are `command`, `start`, `stop`, `toggle` and `reset`. Stop before editing settings. While output runs, settings tabs are disabled; the reset lock remains available in Live.
+
+## Test mode (no joystick)
+
+To check onPC without a joystick, click **Start test (figure 8)** on the **Live** tab. The marker traces a figure 8 around the initial target, stays inside the operating limits, and the brightness executor is held at the test brightness. Size, seconds per lap and brightness are on the **Test** tab (`test_size`, `test_period`, `test_brightness` in `settings.json`). The joystick is ignored during a test. **Stop output** ends it and keeps the last position. A test sends real OSC to onPC like normal output.
 
 ## Stop and restart
 

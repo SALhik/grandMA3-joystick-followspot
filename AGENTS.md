@@ -34,6 +34,7 @@ current code and Git state, and preserve unrelated operator changes.
 | `Launch Followspot.command` | Selects a Tk-capable Python and launches the window |
 | `settings.example.json` | Shareable example configuration |
 | `tests/` | Core behavior, device backend, and headless window lifecycle tests |
+| `docs/GRANDMA3_SETUP.md` | Operator step-by-step onPC setup with commands and troubleshooting |
 | `docs/superpowers/` | Original approved design and implementation plan; historical context |
 
 Runtime `settings.json` is operator-owned and ignored by Git. Do not overwrite
@@ -79,6 +80,7 @@ failures; never report skipped or blocked hardware checks as passing.
   closes the device. Any failure while processing input or sending OSC stops
   output and keeps the device open; unexpected exception types are re-raised
   after stopping so the window never shows running output the controller stopped.
+- Test mode (`Controller.start(test=True)`) needs no joystick: a figure 8 around the initial X/Y (`figure_eight`) and fixed `test_brightness`. `poll` skips joystick reads and button processing while a test runs; failures stop output like normal.
 - Settings changes require stopped output. Release commands must be attempted
   before closing the sender, and release failures must remain visible.
 - The saved `reset_locked` flag defaults to true. Its Live toggle is available

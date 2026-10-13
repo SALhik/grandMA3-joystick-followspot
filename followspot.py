@@ -91,10 +91,11 @@ class App:
         target = ttk.Frame(notebook, padding=16)
         network = ttk.Frame(notebook, padding=16)
         mappings = ttk.Frame(notebook, padding=16)
+        test = ttk.Frame(notebook, padding=16)
         for tab, name in [(live, 'Live'), (controls, 'Controls'), (target, 'Target / stage'),
-                          (network, 'OSC'), (mappings, 'Buttons')]:
+                          (network, 'OSC'), (mappings, 'Buttons'), (test, 'Test')]:
             notebook.add(tab, text=name)
-        self.setting_tabs = [controls, target, network, mappings]
+        self.setting_tabs = [controls, target, network, mappings, test]
         for variable, font in [(self.output_label, ('Helvetica', 17, 'bold')),
                                (self.device_label, None), (self.position_label, ('Menlo', 16)),
                                (self.brightness_label, ('Helvetica', 15)), (self.axes_label, ('Menlo', 11)),
@@ -109,6 +110,8 @@ class App:
         bar.pack(anchor='w', pady=8)
         self.start_button = ttk.Button(bar, text='Start output', command=self.start_output)
         self.start_button.pack(side='left', padx=(0, 10))
+        self.test_button = ttk.Button(bar, text='Start test (figure 8)', command=lambda: self.start_output(test=True))
+        self.test_button.pack(side='left', padx=(0, 10))
         ttk.Button(bar, text='Stop output', command=self.stop_output).pack(side='left', padx=(0, 10))
         self.reset_button = ttk.Button(bar, text='Reset target', command=self.reset_target)
         self.reset_button.pack(side='left')
@@ -161,6 +164,13 @@ class App:
             self.entry(network, row, label, key, width=26)
         ttk.Label(network, text='In onPC: enable OSC Input, Receive and Receive Command.\nUse UDP and the same port/prefix. Set FaderRange to 100.\nIf loopback is unavailable, enter the IP selected in onPC’s OSC Interface.',
                   wraplength=740).grid(row=8, column=0, columnspan=3, sticky='w', pady=15)
+        for row, (key, label) in enumerate([('test_size', 'Figure 8 half-width (m)'), ('test_period', 'Seconds per lap'),
+                                            ('test_brightness', 'Test brightness (0–100 %)')]):
+            self.entry(test, row, label, key)
+        ttk.Label(test, text='Test mode needs no joystick. The marker traces a figure 8 around the initial target (Target / stage tab), '
+                             'stays inside the operating limits, and the executor fader is held at the test brightness. '
+                             'Click Start test on the Live tab; Stop output ends it.',
+                  wraplength=740).grid(row=3, column=0, columnspan=3, sticky='w', pady=15)
         self.button_table = ttk.Treeview(mappings, columns=('action', 'press', 'release'), height=6)
         self.button_table.heading('#0', text='Button')
         self.button_table.column('#0', width=65, stretch=False)
@@ -319,7 +329,7 @@ class App:
                 self.input_lost(f'Settings saved and applied, but the joystick could not be read: {exc}')
         return True
 
-    def start_output(self):
+    def start_output(self, test=False):
         if not self.require_stopped():
             return
         if self.learning:
@@ -328,23 +338,25 @@ class App:
         if not self.apply_settings():
             return
         try:
-            if not (self.joystick and self.joystick.handle):
-                raise ConnectionError('Select a joystick in Controls first; click Refresh after reconnecting it.')
-            # Suppress held buttons even if validation or the first send fails.
-            self.read_snapshot()
-            self.controller.motion.check_axes(self.axes)
-            invalid_buttons = [key for key in self.settings.buttons if int(key) >= len(self.buttons)]
-            if invalid_buttons:
-                raise ValueError(f'Button mappings outside this joystick’s range: {", ".join(invalid_buttons)}')
+            if not test:
+                if not (self.joystick and self.joystick.handle):
+                    raise ConnectionError('Select a joystick in Controls first; click Refresh after reconnecting it.')
+                # Suppress held buttons even if validation or the first send fails.
+                self.read_snapshot()
+                self.controller.motion.check_axes(self.axes)
+                invalid_buttons = [key for key in self.settings.buttons if int(key) >= len(self.buttons)]
+                if invalid_buttons:
+                    raise ValueError(f'Button mappings outside this joystick’s range: {", ".join(invalid_buttons)}')
             if self.sender:
                 self.sender.close()
             s = self.settings
             self.sender = OscSender(s.host, s.port, s.prefix)
-            self.controller.start(self.axes)
+            self.controller.start(self.axes, test=test)
             self.last_tick = time.monotonic()
-            self.output_label.set('OUTPUT RUNNING · OSC sent, reception unconfirmed')
+            self.output_label.set(('TEST RUNNING (figure 8)' if test else 'OUTPUT RUNNING') + ' · OSC sent, reception unconfirmed')
             self.lock_settings(True)
-            self.status.set('Output running. Stick controls speed; centre holds position. Stop retains target and brightness.')
+            self.status.set('Test running: the marker traces a figure 8; the joystick is ignored. Stop ends it.' if test else
+                            'Output running. Stick controls speed; centre holds position. Stop retains target and brightness.')
         except (OSError, RuntimeError, ValueError) as exc:
             self.stop_output(str(exc))
             self.messagebox.showerror('Could not start output', str(exc))
@@ -355,6 +367,9 @@ class App:
         self.sender.send(address, value)
 
     def stop_output(self, reason='Output stopped. Position and brightness are retained in onPC.'):
+        if self.controller.test:
+            # The joystick is not read during a test; do not act on stale button state.
+            self.button_edges = ButtonEdges()
         errors = self.controller.stop()
         if self.sender:
             self.sender.close()
@@ -367,7 +382,7 @@ class App:
     def lock_settings(self, locked):
         for tab in self.setting_tabs:
             self.notebook.tab(tab, state='disabled' if locked else 'normal')
-        for button in (self.start_button, self.save_button):
+        for button in (self.start_button, self.test_button, self.save_button):
             button.configure(state='disabled' if locked else 'normal')
         self.reset_button.configure(state='disabled' if locked and self.settings.reset_locked else 'normal')
         if locked:
@@ -430,7 +445,18 @@ class App:
         now = time.monotonic()
         dt, self.last_tick = now - self.last_tick, now
         try:
-            if self.joystick and self.joystick.handle:
+            if self.controller.active and self.controller.test:
+                try:
+                    self.controller.tick((), dt)
+                except Exception as exc:
+                    self.stop_output(str(exc))
+                    if not isinstance(exc, (OSError, RuntimeError, ValueError)):
+                        raise
+                if now - self.last_ui > 0.1:
+                    self.last_ui = now
+                    self.brightness_label.set(f'Brightness  {self.settings.test_brightness:.1f}% (test)')
+                    self.update_position()
+            elif self.joystick and self.joystick.handle:
                 try:
                     self.axes, self.buttons = self.joystick.read()
                 except (OSError, RuntimeError, ValueError) as exc:
