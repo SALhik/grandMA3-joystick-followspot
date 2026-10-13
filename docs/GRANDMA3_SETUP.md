@@ -24,7 +24,8 @@ Check: `List Attribute` shows `XYZ_X`, `XYZ_Y`, `XYZ_Z` for the MArker.
 
 1. **Patch → Stages → Edit → Spaces**: find the MArker's **Movement Space**.
 2. Write down its X, Y and Z **minimum and maximum**.
-3. Later you will type these into the tool's **Target / stage → MArker movement space** fields (Step 8). The tool converts metres to the 0–100 % attribute value with them, so they must match exactly. This is not the stage box and not the Target Space.
+3. Later you will type these into the tool's **Target / stage → MArker movement space** fields (Step 9). The tool converts metres to the 0–100 % attribute value with them, so they must match exactly. This is not the stage box and not the Target Space. The tool's defaults are an example 200 m cube centred on the origin, not measured geometry.
+4. For the first version use an unrotated stage and space.
 
 ## Step 4. Set a small Target Space
 
@@ -74,7 +75,9 @@ Check: moving the executor's fader by hand changes the lights' brightness. Grand
 
 ## Step 7. Turn Programmer Time off
 
-Turn **Programmer Time off** so the marker follows the joystick without fade lag. The tool writes marker coordinates to the programmer.
+Turn **Programmer Time off** so the marker follows the joystick without fade lag. The tool writes marker coordinates to the programmer, and programmer fades would add lag.
+
+In the master controls menu, tap **Prog Time** until its green marker disappears (or press Off on an executor assigned to the Program Time master). This is from MA's [Time Control help](https://help.malighting.com/grandMA3/2.2/HTML/masters_grand_time.html) for 2.2; check the 2.5 wording on your console.
 
 ## Step 8. Enable OSC input
 
@@ -104,6 +107,7 @@ Open the tool (`Launch Followspot.command`) and fill in these tabs. Click **Save
 | --- | --- |
 | Target / stage | MArker CID, Z height, operating limits, initial X/Y, **movement space min/max from Step 3** |
 | OSC | host/IP, port 8000, empty prefix, brightness executor page and number (1 and 201 in the example) |
+| Zoom / iris (optional) | enable, axis, executor page and number (1 and 202 in the example); see the last section |
 
 ## Step 10. Test without the joystick (figure 8)
 
@@ -124,5 +128,22 @@ If nothing moves:
 1. Go to **Controls**, select the PXN joystick and click **Refresh** if it is missing.
 2. Click **Learn** beside X, Y and Brightness, then move only that control. Axis numbers start at 0.
 3. Release the stick and click **Calibrate centre**. Set inversion, dead zone and maximum speed.
-4. Optional: map buttons on the **Buttons** tab (see the README).
+4. Optional: map buttons on the **Buttons** tab, and enable zoom/iris (see below and [OPERATING.md](OPERATING.md)).
 5. **Save / apply settings**, then **Start output**.
+
+## Optional: zoom / iris executor
+
+Do this after the brightness executor works. The tool controls only a fader level; the cue and playback you set up here decide what that does to zoom or iris.
+
+1. Create a separate sequence that contains **only zoom or only iris** values for the followspots, and assign it to its own executor, for example Page 1, Executor 202. It must differ from the brightness executor.
+2. In **Assign → Handle** set that executor's fader function to **Temp**. A Temp fader crossfades the cue on and off (see MA's [fader functions](https://help.malighting.com/grandMA3/2.5/HTML/executor_assign.html)).
+3. Establish the desired underlying value for the low end of the fader, and store the desired high-end value in the Temp cue.
+4. Clear those values from the programmer, then move the fader by hand through its full travel and confirm the zoom or iris behaves as expected.
+5. Keep **FaderRange = 100** on the OSC row (Step 8).
+6. In the tool open **Zoom / iris**, enable the axis, enter the executor page and number, then learn and calibrate the axis (see [OPERATING.md](OPERATING.md#optional-zoom--iris-control)).
+
+Check: a figure-8 test with the axis enabled sends the initial zoom/iris level once but does not move it, because the joystick is ignored in a test. Confirm zoom/iris movement with the joystick.
+
+## References
+
+MA's help: [XYZ activation](https://help.malighting.com/grandMA3/2.5/HTML/xyz_activate.html), [MArkers](https://help.malighting.com/grandMA3/2.5/HTML/xyz_marker.html), [stages and spaces](https://help.malighting.com/grandMA3/2.5/HTML/patch_stage.html), [OSC](https://help.malighting.com/grandMA3/2.5/HTML/remote_inputs_osc.html), [Percent input](https://help.malighting.com/grandMA3/2.5/HTML/keyword_percent_word.html).
