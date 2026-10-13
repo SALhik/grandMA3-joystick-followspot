@@ -83,7 +83,7 @@ class App:
         outer = ttk.Frame(self.root, padding=16)
         outer.pack(fill='both', expand=True)
         ttk.Label(outer, text='Joystick Followspot', font=('Helvetica', 20, 'bold')).pack(anchor='w')
-        ttk.Label(outer, text='Stick → X/Y speed     Slider → brightness     Buttons → commands / output controls').pack(anchor='w', pady=(4, 12))
+        ttk.Label(outer, text='Stick → X/Y speed    Slider → brightness    Optional axis → zoom / iris    Buttons → commands / output').pack(anchor='w', pady=(4, 12))
         notebook = ttk.Notebook(outer)
         notebook.pack(fill='both', expand=True)
         self.notebook = notebook
