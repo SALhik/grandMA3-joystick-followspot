@@ -25,6 +25,12 @@ brew install sdl2
 
 SDL2 is found in the standard Homebrew or framework locations. A custom library path can be supplied through `FOLLOWSPOT_SDL2`. No virtual environment is required.
 
+### Windows
+
+Double-click **Launch Followspot.bat**. It picks a Python with Tk (a local `.venv`, then `python`, then the `py` launcher) and opens the same window. Install Python 3.10+ from python.org with "tcl/tk and IDLE" ticked.
+
+Windows has no native HID fallback, so the joystick is read through SDL2. Download the SDL2 runtime (`SDL2.dll`, 64-bit to match Python) from the SDL releases page and put it in this folder, next to the launcher, or point `FOLLOWSPOT_SDL2` at it. The launcher uses a `SDL2.dll` beside it automatically. The Windows launcher has not been tested on a Windows machine with onPC or a physical joystick.
+
 ### Joystick detection or access errors
 
 The joystick list combines SDL controllers with macOS HID controllers that SDL does not list, and opens only the selected joystick. Keyboard/mouse interfaces are excluded. This avoids confusing an SDL detection failure with a disconnected USB device.

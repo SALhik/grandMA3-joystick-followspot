@@ -26,7 +26,8 @@ class SDLJoystick:
             except OSError:
                 pass
         if self.lib is None:
-            raise RuntimeError('SDL2 is missing. Install it with: brew install sdl2')
+            raise RuntimeError(('SDL2 is missing. Put SDL2.dll beside the launcher or set FOLLOWSPOT_SDL2.' if sys.platform == 'win32'
+                               else 'SDL2 is missing. Install it with: brew install sdl2'))
         signatures = {
             'SDL_SetHint': ([ct.c_char_p, ct.c_char_p], ct.c_int),
             'SDL_InitSubSystem': ([ct.c_uint32], ct.c_int),

@@ -35,6 +35,7 @@ current code and Git state, and preserve unrelated operator changes.
 | `followspot_core.py` | Settings validation/persistence, proportional motion, coordinate conversion, OSC encoding/sending, the button edge tracker and output controller |
 | `joystick.py` | SDL2 and native macOS HID readers via `ctypes`, normalization and the combined device list |
 | `Launch Followspot.command` | Selects a Tk-capable Python and launches the window |
+| `Launch Followspot.bat` | Windows equivalent of the launcher; SDL2 only (no native HID), untested on Windows |
 | `settings.example.json` | Shareable example configuration |
 | `tests/` | Core behavior, device backend, and headless window lifecycle tests |
 | `docs/GRANDMA3_SETUP.md` | Operator step-by-step onPC setup with commands and troubleshooting |
