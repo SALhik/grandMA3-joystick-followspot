@@ -473,12 +473,18 @@ class FakeJoystick:
 
 class RealWindowTests(unittest.TestCase):
     """Run the real __init__/build_window wiring when Tk can open a window."""
-    def test_real_window_zoom_tab_learns_calibrates_and_resets(self):
-        import tkinter as tk
+    def open_root(self):
         try:
-            root = tk.Tk()
+            import tkinter as tk
+        except ImportError as exc:
+            self.skipTest(f'Tk unavailable: {exc}')
+        try:
+            return tk.Tk()
         except tk.TclError as exc:
             self.skipTest(f'Tk window unavailable: {exc}')
+
+    def test_real_window_zoom_tab_learns_calibrates_and_resets(self):
+        root = self.open_root()
         root.withdraw()
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
@@ -508,11 +514,7 @@ class RealWindowTests(unittest.TestCase):
                 app.close()
 
     def test_real_window_selects_saved_device_and_runs_output(self):
-        import tkinter as tk
-        try:
-            root = tk.Tk()
-        except tk.TclError as exc:
-            self.skipTest(f'Tk window unavailable: {exc}')
+        root = self.open_root()
         root.withdraw()
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
