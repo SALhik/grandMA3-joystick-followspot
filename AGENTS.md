@@ -2,7 +2,8 @@
 
 ## Purpose and scope
 
-This is a compact Python joystick controller for grandMA3 onPC 2.5 on macOS.
+This is a compact Python joystick controller for grandMA3 onPC 2.5, developed
+and used on macOS. A Windows launcher (SDL2 input only) exists but is untested.
 The intended use is a dedicated front-of-house followspot, with the joystick
 connected to the same Mac as onPC. The operator currently uses a PXN-2113 Pro.
 
@@ -24,7 +25,7 @@ Preserve these agreed requirements when maintaining the project:
   requirement for a signed app or an Apple developer account.
 
 Agents can edit the implementation, tests, and documentation for the user's
-requested changes. Read this guide and [README.md](README.md) first, inspect the
+requested changes. Read this guide and [README.md](README.md) (which indexes the other docs) first, inspect the
 current code and Git state, and preserve unrelated operator changes.
 
 ## Code map
@@ -36,9 +37,13 @@ current code and Git state, and preserve unrelated operator changes.
 | `joystick.py` | SDL2 and native macOS HID readers via `ctypes`, normalization and the combined device list |
 | `Launch Followspot.command` | Selects a Tk-capable Python and launches the window |
 | `Launch Followspot.bat` | Windows equivalent of the launcher; SDL2 only (no native HID), untested on Windows |
-| `settings.example.json` | Shareable example configuration |
+| `settings.example.json` | Shareable example configuration; must equal the `Settings` defaults |
+| `requirements.txt` | Comment-only: records that there are no third-party packages |
+| `.coderabbit.yaml` | Review-bot configuration (docstring check off) |
 | `tests/` | Core behavior, device backend, and headless window lifecycle tests |
-| `docs/GRANDMA3_SETUP.md` | Operator step-by-step onPC setup with commands and troubleshooting |
+| `README.md` | Short overview: documentation index, quick start, launch, diagnostics |
+| `docs/GRANDMA3_SETUP.md` | Operator step-by-step onPC setup with commands, zoom/iris executor, troubleshooting |
+| `docs/OPERATING.md` | Operator guide: joystick, buttons, reset lock, zoom/iris, test mode, stop/restart, limitations |
 | `docs/superpowers/` | Original approved design and implementation plan; historical context |
 
 Runtime `settings.json` is operator-owned and ignored by Git. Do not overwrite
@@ -106,7 +111,7 @@ failures; never report skipped or blocked hardware checks as passing.
   `Controller.tick`, which owns MA presses. Any joystick read outside `poll` goes
   through `App.read_snapshot`, which reseeds the tracker so held buttons stay
   unobserved. Learning samples reseed without acting. Priority and held-button
-  rules are specified for operators in README step 6; keep them. A mapped Reset
+  rules are specified for operators in docs/OPERATING.md (Buttons); keep them. A mapped Reset
   never applies settings drafts; the window Reset button applies them while stopped.
 - Coordinates are in metres in the script. Convert to percent using the actual
   MArker **Movement Space** bounds, which differ from operating limits and the
@@ -156,8 +161,9 @@ the required CoreFoundation objects, and release them during cleanup. Respect
 macOS access denials; do not treat an empty SDL list as proof that Input
 Monitoring permission is missing.
 
-Some agent sandboxes deny native Tk window creation (the real-window test then
-skips itself), physical HID reads, process
+Some agent sandboxes deny native Tk window creation, and some Python installs
+(for example Homebrew's default `python3`) lack `_tkinter`; the two real-window
+tests skip in both cases. Sandboxes may also deny physical HID reads, process
 inspection, UDP operations, or network/GitHub access. Automated tests and packet
 encoding checks cannot establish end-to-end operation. Use a normal macOS
 Terminal and a test show for manual input, OSC reception, marker movement,
@@ -173,14 +179,22 @@ reproduced. One plausible cause was fixed on 2026-10-09: an OSC send failure
 used to close the joystick, so the next Start showed that message. Do not
 claim the report is resolved without operator evidence.
 
+Added since then: proportional zoom/iris axis, the figure-8 test mode with the
+step-by-step setup guide, and the Windows launcher. None has operator
+confirmation recorded here: zoom/iris movement in a test show and the Windows
+launcher on real hardware remain unverified.
+
 Automated coverage: core motion/configuration/OSC-packet tests, simulated SDL
 input/disconnect, native HID discovery and combined-list tests with doubles,
-headless window lifecycle tests, and one real Tk window test that skips when Tk
-cannot open a window. MA's installed 2.5 system tests confirm the `XYZ_X`,
-`XYZ_Y`, `XYZ_Z`, and `XYZ_MArker` attribute names.
+headless window lifecycle tests (including zoom/iris and test mode), and two real
+Tk window tests that skip when Tk is missing or cannot open a window. The
+Windows launcher has no automated coverage. MA's installed 2.5 system tests
+confirm the `XYZ_X`, `XYZ_Y`, `XYZ_Z`, and `XYZ_MArker` attribute names.
 
-Keep changes compact and follow existing style. Update README for operator-facing
-changes and this guide when architecture, workflows, or known limitations change.
+Keep changes compact and follow existing style. Update README,
+docs/OPERATING.md or docs/GRANDMA3_SETUP.md for operator-facing changes (keep
+each fact in one place and link rather than duplicate), and this guide when
+architecture, workflows, or known limitations change.
 Consult official MA 2.5 documentation or the matching installed MA system tests
 before changing console command syntax. The original plan is not proof that a
 command works. Diagnose the failing boundary before changing unrelated setup.

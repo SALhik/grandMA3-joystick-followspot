@@ -1,5 +1,7 @@
 # Joystick Followspot Implementation Plan
 
+> **Historical document.** This is the original approved plan from 2026-10-08. The tool has since gained zoom/iris control, a figure-8 test mode, local button actions, a reset lock, native macOS HID input and a Windows launcher, and long sample gaps are now capped rather than skipped. For current behaviour see [README.md](../../../README.md), [docs/OPERATING.md](../../OPERATING.md) and [AGENTS.md](../../../AGENTS.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax for tracking.
 
 **Goal:** Deliver a compact joystick-to-grandMA3 controller with editable settings.

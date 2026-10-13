@@ -1,5 +1,7 @@
 # Joystick followspot controller
 
+> **Historical document.** This is the original approved design from 2026-10-08. The tool has since gained zoom/iris control, a figure-8 test mode, local button actions, a reset lock, native macOS HID input and a Windows launcher, and long sample gaps are now capped rather than skipped. For current behaviour see [README.md](../../../README.md), [docs/OPERATING.md](../../OPERATING.md) and [AGENTS.md](../../../AGENTS.md).
+
 ## Purpose and agreed scope
 
 A compact Python tool on the show Mac reads the connected PXN-2113 Pro joystick and controls a dedicated FOH followspot through grandMA3 onPC 2.5 on the same Mac. A small settings window allows changes without editing code. No Apple developer account or packaged native app is required.

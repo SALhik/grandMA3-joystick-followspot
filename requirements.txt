@@ -1,3 +1,4 @@
 # No third-party Python packages.
-# Runtime on macOS: Python 3.10+ with Tkinter. Native HID fallback is built in.
-# SDL2 is optional on macOS and already installed on the development Mac.
+# Python 3.10+ with Tkinter is required (the python.org installers include it).
+# Joystick input: macOS uses SDL2 (optional, `brew install sdl2`) plus a built-in
+# native HID reader. Windows has no native reader, so SDL2.dll is required.
