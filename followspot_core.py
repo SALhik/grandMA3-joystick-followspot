@@ -8,6 +8,8 @@ from pathlib import Path
 import re
 import socket
 import struct
+import threading
+import time
 from typing import get_type_hints
 
 
@@ -326,6 +328,83 @@ def psn_info_packet(system_name, tracker_id, tracker_name, timestamp_us, frame):
     trackers = psn_chunk(0x0002, psn_chunk(tracker_id, name, True), True)
     return psn_chunk(PSN_INFO, _psn_header(timestamp_us, frame)
                      + psn_chunk(0x0001, system_name.encode('utf-8')) + trackers, True)
+
+
+PSN_RATE = 30.0
+PSN_SYSTEM_NAME = 'Followspot'
+
+
+class PsnStreamer:
+    """Streams one tracker's latest position as PSN at about 30 Hz.
+
+    A stopped stream makes onPC reset the MArker to 0, 0, 0, so the thread
+    keeps sending even while the joystick is idle. Errors are stored for
+    the window's poll; nothing is raised into the Tk callback.
+    """
+    def __init__(self, settings, xyz, sock=None, clock=time.monotonic, start=True):
+        self.destination = (settings.psn_group, settings.psn_port)
+        self.tracker_id = settings.psn_tracker_id
+        self.clock = clock
+        self.began = clock()
+        self.lock = threading.Lock()
+        self._xyz = tuple(xyz)
+        self._error = None
+        self.frame = 0
+        self.last_info = None
+        self.stopping = threading.Event()
+        self.thread = None
+        if sock is None:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(settings.psn_interface))
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 1)
+            except OSError:
+                sock.close()
+                raise
+        self.socket = sock
+        if start:
+            self.thread = threading.Thread(target=self._run, name='psn-stream', daemon=True)
+            self.thread.start()
+
+    @property
+    def position(self):
+        with self.lock:
+            return self._xyz
+
+    def set_position(self, xyz):
+        with self.lock:
+            self._xyz = tuple(xyz)
+
+    def poll_error(self):
+        with self.lock:
+            error, self._error = self._error, None
+        return error
+
+    def step(self):
+        now = self.clock()
+        timestamp = int((now - self.began) * 1_000_000)
+        if self.last_info is None or now - self.last_info >= 1.0:
+            self.socket.sendto(psn_info_packet(PSN_SYSTEM_NAME, self.tracker_id, PSN_SYSTEM_NAME,
+                                               timestamp, self.frame), self.destination)
+            self.last_info = now
+        self.socket.sendto(psn_data_packet(self.tracker_id, self.position, timestamp, self.frame), self.destination)
+        self.frame += 1
+
+    def _run(self):
+        while not self.stopping.is_set():
+            try:
+                self.step()
+            except Exception as exc:
+                with self.lock:
+                    self._error = exc
+                return
+            self.stopping.wait(1 / PSN_RATE)
+
+    def close(self):
+        self.stopping.set()
+        if self.thread is not None and self.thread is not threading.current_thread():
+            self.thread.join(timeout=1.0)
+        self.socket.close()
 
 
 class OscSender:
