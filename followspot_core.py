@@ -300,6 +300,34 @@ def osc_packet(address, value):
     return osc_string(address) + osc_string(',f') + struct.pack('>f', value)
 
 
+PSN_DATA, PSN_INFO = 0x6755, 0x6756
+
+
+def psn_chunk(chunk_id, payload, has_children=False):
+    """One PSN chunk: header is id | length << 16 | has_children << 31, little-endian."""
+    if len(payload) > 0x7FFF:
+        raise ValueError('PSN chunk payload is too long.')
+    return struct.pack('<I', chunk_id | len(payload) << 16 | int(has_children) << 31) + payload
+
+
+def _psn_header(timestamp_us, frame):
+    # Version 2.0, one packet per frame.
+    return psn_chunk(0x0000, struct.pack('<QBBBB', timestamp_us, 2, 0, frame & 255, 1))
+
+
+def psn_data_packet(tracker_id, xyz, timestamp_us, frame):
+    position = psn_chunk(0x0000, struct.pack('<3f', *xyz))
+    trackers = psn_chunk(0x0001, psn_chunk(tracker_id, position, True), True)
+    return psn_chunk(PSN_DATA, _psn_header(timestamp_us, frame) + trackers, True)
+
+
+def psn_info_packet(system_name, tracker_id, tracker_name, timestamp_us, frame):
+    name = psn_chunk(0x0000, tracker_name.encode('utf-8'))
+    trackers = psn_chunk(0x0002, psn_chunk(tracker_id, name, True), True)
+    return psn_chunk(PSN_INFO, _psn_header(timestamp_us, frame)
+                     + psn_chunk(0x0001, system_name.encode('utf-8')) + trackers, True)
+
+
 class OscSender:
     def __init__(self, host, port, prefix=''):
         # Resolve once when starting, not inside the 30 Hz UI callback.
