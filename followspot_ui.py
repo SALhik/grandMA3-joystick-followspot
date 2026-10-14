@@ -183,6 +183,8 @@ class FollowspotView:
         app.reset_button.pack(side='left', padx=(0, 16))
         ttk.Checkbutton(reset, text='Lock reset while running', variable=app.values['reset_locked'],
                         command=app.set_reset_lock).pack(side='left')
+        # refresh packs this only when PSN is selected or a stream is held.
+        app.release_button = ttk.Button(reset, text='Release marker', command=app.release_marker)
         self.label(live, variable=self.reset_state).grid(row=6, column=0, columnspan=2, sticky='w', pady=(8, 0))
 
     def axis_row(self, parent, row, label, key, invert):
@@ -271,6 +273,19 @@ class FollowspotView:
                                             ('attribute_x', 'MArker X attribute'), ('attribute_y', 'MArker Y attribute'), ('attribute_z', 'MArker Z attribute')]):
             self.entry(parent, row, label, key, width=26)
         self.label(parent, text='In onPC, enable OSC Input, Receive and Receive Command. Match the selected OSC Interface, UDP port and prefix. Reception checks are in Diagnostics.').grid(row=6, column=0, columnspan=3, sticky='w', pady=12)
+        caption = self.ttk.Label(parent, text='Position output')
+        caption.grid(row=7, column=0, sticky='w', padx=(0, 16), pady=(16, 5))
+        self.field_captions['position_output'] = caption
+        box = self.edit(self.ttk.Combobox(parent, textvariable=self.app.values['position_output'], values=['osc', 'psn'],
+                                          state='readonly', width=8), 'readonly')
+        box.grid(row=7, column=1, sticky='w', pady=(16, 5))
+        self.fields['position_output'] = box
+        self.field_labels['position_output'] = 'Position output'
+        self.field_pages['position_output'] = self.current_page
+        for row, (key, label) in enumerate([('psn_tracker_id', 'PSN tracker ID'), ('psn_group', 'PSN multicast group'),
+                                            ('psn_port', 'PSN port'), ('psn_interface', 'PSN interface (this computer)')], 8):
+            self.entry(parent, row, label, key, width=26)
+        self.label(parent, text='osc moves the MArker with commands and takes the console selection. psn streams the position without touching the selection; brightness, zoom / iris and buttons still use OSC. In onPC set the PSN row Interface to this computer, add a tracker whose Tracker ID and MArker ID match, and see docs/PSN.md. Stop holds the position; Release marker lets the MArker reset to 0, 0, 0.').grid(row=12, column=0, columnspan=3, sticky='w', pady=12)
 
     def build_mappings(self, parent):
         app, ttk = self.app, self.ttk
@@ -388,7 +403,9 @@ class FollowspotView:
                                'Save settings to apply changes. Start and stopped Reset also save and apply them.')
         s = app.settings
         self.summary.set(f'{s.device_name or "No saved joystick"}  ·  MArker {s.marker_id}  ·  OSC {s.host}:{s.port}' +
-                         (f' /{s.prefix}' if s.prefix else ''))
+                         (f' /{s.prefix}' if s.prefix else '') +
+                         (f'  ·  PSN tracker {s.psn_tracker_id} → {s.psn_group}:{s.psn_port} via {s.psn_interface}'
+                          if s.position_output == 'psn' else ''))
         reason = ''
         if active:
             reason = 'OSC sent · reception unconfirmed' + (' · joystick ignored during test' if app.controller.test else '')
@@ -421,6 +438,11 @@ class FollowspotView:
         app.test_button.configure(state='disabled' if active or app.learning or pending or draft is None else 'normal')
         app.save_button.configure(state='disabled' if active else 'normal')
         app.reset_button.configure(state='disabled' if active and s.reset_locked else 'normal')
+        if s.position_output == 'psn' or app.streamer is not None:
+            app.release_button.pack(side='left', padx=(16, 0))
+        else:
+            app.release_button.pack_forget()
+        app.release_button.configure(state='normal' if app.streamer is not None else 'disabled')
         self.state_label.configure(style='Test.TLabel' if active and app.controller.test else 'Running.TLabel' if active else 'TLabel')
         self.reset_state.set(('Locked during output. ' if s.reset_locked else 'Unlocked during output. ') +
                              'Reset restores initial target and zoom / iris; brightness is retained.')
@@ -545,3 +567,8 @@ class FollowspotView:
         px = left + (clamp(x, s.x_min, s.x_max) - s.x_min) * scale
         py = bottom - (clamp(y, s.y_min, s.y_max) - s.y_min) * scale
         canvas.create_oval(px-5, py-5, px+5, py+5, fill=color, outline=color, tags='target')
+        if self.app.streamer is not None and not self.app.controller.active:
+            hx, hy, _ = self.app.streamer.position
+            hpx = left + (clamp(hx, s.x_min, s.x_max) - s.x_min) * scale
+            hpy = bottom - (clamp(hy, s.y_min, s.y_max) - s.y_min) * scale
+            canvas.create_oval(hpx-8, hpy-8, hpx+8, hpy+8, outline=color, dash=(3, 2), tags='held')

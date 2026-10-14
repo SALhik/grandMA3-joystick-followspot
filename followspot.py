@@ -406,7 +406,11 @@ class App:
 
     def update_position(self):
         x, y, z = self.controller.motion.xyz
-        self.position_label.set(f'X {x:+.3f} m   Y {y:+.3f} m   Z {z:.3f} m')
+        text = f'X {x:+.3f} m   Y {y:+.3f} m   Z {z:.3f} m'
+        if self.streamer is not None and not self.controller.active:
+            hx, hy, hz = self.streamer.position
+            text += f'\nHeld at  X {hx:+.3f} m   Y {hy:+.3f} m   Z {hz:.3f} m'
+        self.position_label.set(text)
         self.zoom_label.set(f'Zoom / iris  {self.controller.motion.zoom_level:.1f}%' if self.settings.zoom_enabled else
                             'Zoom / iris  disabled')
         self.view.refresh()

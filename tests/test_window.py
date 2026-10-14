@@ -676,6 +676,47 @@ class PsnWindowTests(unittest.TestCase):
             app.close_streamer()
         self.assertIsNone(app.streamer)
 
+    def test_position_label_shows_the_held_position_while_stopped(self):
+        app, _ = self.app(position_output='psn')
+        app.start_output()
+        app.controller.tick([1.0, 0, 0], 0.1)
+        app.stop_output()
+        self.assertIn('Held at', app.position_label.get())
+        app.release_marker()
+        self.assertNotIn('Held at', app.position_label.get())
+
+    def test_position_label_has_no_held_text_while_running(self):
+        app, _ = self.app(position_output='psn')
+        app.start_output()
+        app.update_position()
+        self.assertNotIn('Held at', app.position_label.get())
+
+    def test_stopped_reset_keeps_showing_the_streamers_held_position(self):
+        app, _ = self.app(position_output='psn')
+        app.start_output()
+        app.controller.tick([1.0, 0, 0], 0.1)
+        app.stop_output()
+        hx, hy, hz = self.streamers[0].position
+        self.assertTrue(app.reset_target())
+        target = app.controller.motion.xyz
+        self.assertNotEqual((hx, hy, hz), tuple(target))
+        lines = app.position_label.get().split('\n')
+        self.assertEqual(lines[0], f'X {target[0]:+.3f} m   Y {target[1]:+.3f} m   Z {target[2]:.3f} m')
+        self.assertEqual(lines[1], f'Held at  X {hx:+.3f} m   Y {hy:+.3f} m   Z {hz:.3f} m')
+        self.assertEqual(self.streamers[0].position, (hx, hy, hz))
+
+    def test_stream_error_fault_persists_in_the_fault_text_until_start(self):
+        app, _ = self.app(position_output='psn')
+        app.start_output()
+        app.stop_output()
+        self.streamers[0].error = OSError('network down')
+        app.poll()
+        self.assertIn('network down', app.fault_label.get())
+        app.poll()
+        self.assertIn('network down', app.fault_label.get())
+        app.start_output()
+        self.assertNotIn('network down', app.fault_label.get())
+
     def test_close_asks_before_dropping_a_held_stream(self):
         app, _ = self.app(position_output='psn')
         destroyed = []
@@ -776,6 +817,37 @@ with tempfile.TemporaryDirectory() as folder:
         if result.returncode == 77:
             self.skipTest(f'Tk window unavailable: {result.stderr.strip()}')
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_real_window_psn_controls_and_held_marker(self):
+        streamers = []
+        def new_streamer(settings, xyz):
+            streamers.append(FakeStreamer(settings, xyz))
+            return streamers[-1]
+        with patch.object(followspot, 'PsnStreamer', side_effect=new_streamer):
+            app = self.open_app(position_output='psn')
+            self.assertIn('position_output', app.view.fields)
+            for key in ('psn_tracker_id', 'psn_group', 'psn_port', 'psn_interface'):
+                self.assertIn(key, app.view.fields)
+            app.view.refresh()
+            self.assertEqual(str(app.release_button.cget('state')), 'disabled')
+            app.start_output()
+            app.view.refresh()
+            self.assertEqual(str(app.release_button.cget('state')), 'normal')
+            app.stop_output()
+            app.root.update_idletasks()
+            app.view.draw_stage()
+            self.assertTrue(app.view.stage.find_withtag('held'))
+            app.release_button.invoke()
+            self.assertIsNone(app.streamer)
+            app.view.draw_stage()
+            self.assertFalse(app.view.stage.find_withtag('held'))
+            self.assertIn('PSN', app.view.summary.get())
+
+    def test_real_window_release_button_is_hidden_in_osc_mode(self):
+        app = self.open_app()
+        app.view.refresh()
+        self.assertFalse(app.release_button.winfo_manager())
+        self.assertNotIn('PSN', app.view.summary.get())
 
     def test_setup_is_readable_but_cannot_be_edited_while_running(self):
         app = self.open_app()
