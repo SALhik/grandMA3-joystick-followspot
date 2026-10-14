@@ -137,7 +137,10 @@ failures; never report skipped or blocked hardware checks as passing.
   enable global **Input**, row **Receive** and **Receive Command**, and use
   **EchoInput** plus System Monitor for reception checks. EchoOutput concerns
   MA's outgoing data. The row's Destination IP is for outgoing OSC; reception
-  uses the selected top-level Interface. Match the script's destination to that
+  uses the selected top-level Interface. A pre-existing OSC row on the same port
+  made a theatre show ignore the tool's commands with no error (typed commands
+  and a blank show worked); removing it fixed it. See docs/GRANDMA3_SETUP.md,
+  Step 8 item 6. Match the script's destination to that
   interface. Do not assume `127.0.0.1` is available merely because both programs
   run on the same Mac. `lsof -nP -iUDP:8000` in a normal Terminal helps inspect
   listeners.

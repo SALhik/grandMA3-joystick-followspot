@@ -96,6 +96,7 @@ In the master controls menu, tap **Prog Time** until its green marker disappears
 
 4. Choose the **Interface** that onPC listens on. The tool's default host is `127.0.0.1`. If onPC uses your Mac's Ethernet or Wi-Fi address, put **that IP** in the tool's **OSC → onPC host / IP** field. Do not assume loopback works.
 5. Leave outgoing echo and command transmission off unless you need them. The row's Destination IP only affects OSC that onPC sends out.
+6. **In an existing show, check the other OSC rows first.** A show that already has an OSC row (for example row 1, set up for another controller) can stop this tool from working even though a blank test show works: MA showed the incoming messages and reported no error, but the marker never moved. The cause is probably that the older row handled the messages with its own settings, but this is not verified. Removing the old row fixed it in one theatre show. Delete or disable any other row that uses the same port (8000), or make it match the table above, and keep only one row for this tool.
 
 Check in Terminal: `lsof -nP -iUDP:8000` should show onPC listening.
 
@@ -119,9 +120,10 @@ Open the tool (`Launch Followspot.command`) and fill in these tabs. Click **Save
 If nothing moves:
 
 1. Enable **EchoInput** in the OSC row and open **System Monitor**: incoming `/cmd` text should appear. If not, check the port, the Interface/IP (Step 8) and that **Receive Command** is on.
-2. If the commands appear but are rejected, read the error text in System Monitor. The tool sends `ClearSelection; MArker 1; Attribute "XYZ_X" At Absolute Percent 50; ...`.
-3. If the commands are accepted but the beams do not move, recheck Steps 2, 3 and 5.
-4. If the marker moves but the fader does not, recheck Step 6 (Master fader, **FaderRange = 100**, correct executor page and number).
+2. If the commands appear but nothing happens and there is no error, look for a second OSC row on the same port (Step 8, item 6). Typing the same commands by hand works in this case, so the command syntax is not the problem.
+3. If the commands appear but are rejected, read the error text in System Monitor. The tool sends `ClearSelection; MArker 1; Attribute "XYZ_X" At Absolute Percent 50; ...`.
+4. If the commands are accepted but the beams do not move, recheck Steps 2, 3 and 5.
+5. If the marker moves but the fader does not, recheck Step 6 (Master fader, **FaderRange = 100**, correct executor page and number).
 
 ## Step 11. Connect the joystick
 
