@@ -413,5 +413,39 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(emitted, [])
 
 
+class PsnSettingsTests(unittest.TestCase):
+    def test_old_settings_default_to_osc_position_output(self):
+        s = core.Settings.from_dict({'port': 8001})
+        self.assertEqual((s.position_output, s.psn_tracker_id, s.psn_group, s.psn_port, s.psn_interface),
+                         ('osc', 1, '236.10.10.10', 56565, '127.0.0.1'))
+
+    def test_example_file_equals_defaults(self):
+        example = core.Settings.load(Path(__file__).resolve().parent.parent / 'settings.example.json')
+        self.assertEqual(example.to_dict(), core.Settings().to_dict())
+
+    def test_invalid_psn_values_name_their_field(self):
+        cases = (({'position_output': 'sacn'}, 'position_output'),
+                 ({'psn_tracker_id': 0}, 'psn_tracker_id'),
+                 ({'psn_tracker_id': 65536}, 'psn_tracker_id'),
+                 ({'psn_port': 0}, 'psn_port'),
+                 ({'psn_port': 70000}, 'psn_port'),
+                 ({'psn_group': '10.0.0.5'}, 'psn_group'),
+                 ({'psn_group': 'not-an-ip'}, 'psn_group'),
+                 ({'psn_interface': 'localhost'}, 'psn_interface'),
+                 ({'psn_interface': '::1'}, 'psn_interface'))
+        for changes, field in cases:
+            with self.subTest(changes=changes):
+                with self.assertRaises(core.SettingsError) as caught:
+                    core.Settings.from_dict(dict(core.Settings().to_dict(), **changes))
+                self.assertIn(field, caught.exception.fields)
+
+    def test_release_marker_is_a_local_action_without_ma_commands(self):
+        s = core.Settings.from_dict(dict(core.Settings().to_dict(), buttons={'4': {'action': 'release_marker'}}))
+        self.assertEqual(core.local_actions([4], s.buttons), ['release_marker'])
+        with self.assertRaises(core.SettingsError):
+            core.Settings.from_dict(dict(core.Settings().to_dict(),
+                                         buttons={'4': {'action': 'release_marker', 'press': 'Go+'}}))
+
+
 if __name__ == '__main__':
     unittest.main()

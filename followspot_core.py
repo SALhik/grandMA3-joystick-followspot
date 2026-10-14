@@ -1,6 +1,7 @@
 """Validated settings, proportional motion and grandMA3 OSC output."""
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, fields
+import ipaddress
 import json
 import math
 from pathlib import Path
@@ -14,7 +15,8 @@ from typing import get_type_hints
 MAX_STEP = 0.25
 BUTTON_ACTIONS = {'command': 'MA command', 'start': 'Start output',
                   'stop': 'Stop output', 'toggle': 'Toggle output',
-                  'reset': 'Reset target'}
+                  'reset': 'Reset target', 'release_marker': 'Release PSN marker'}
+PSN_FIELDS = ('position_output', 'psn_tracker_id', 'psn_group', 'psn_port', 'psn_interface')
 
 
 def clamp(value, low, high):
@@ -76,6 +78,11 @@ class Settings:
     host: str = '127.0.0.1'
     port: int = 8000
     prefix: str = ''
+    position_output: str = 'osc'
+    psn_tracker_id: int = 1
+    psn_group: str = '236.10.10.10'
+    psn_port: int = 56565
+    psn_interface: str = '127.0.0.1'
     buttons: dict = field(default_factory=dict)
 
     def to_dict(self):
@@ -145,6 +152,22 @@ class Settings:
                 raise SettingsError('IDs must be positive.', key)
         if not 1 <= self.port <= 65535:
             raise SettingsError('OSC port must be 1–65535.', 'port')
+        if self.position_output not in ('osc', 'psn'):
+            raise SettingsError('Position output must be osc or psn.', 'position_output')
+        if not 1 <= self.psn_tracker_id <= 65535:
+            raise SettingsError('PSN tracker ID must be 1–65535.', 'psn_tracker_id')
+        if not 1 <= self.psn_port <= 65535:
+            raise SettingsError('PSN port must be 1–65535.', 'psn_port')
+        try:
+            group_is_multicast = ipaddress.IPv4Address(self.psn_group).is_multicast
+        except ValueError:
+            group_is_multicast = False
+        if not group_is_multicast:
+            raise SettingsError('PSN group must be an IPv4 multicast address such as 236.10.10.10.', 'psn_group')
+        try:
+            ipaddress.IPv4Address(self.psn_interface)
+        except ValueError:
+            raise SettingsError('PSN interface must be an IPv4 address of this computer, for example 127.0.0.1.', 'psn_interface') from None
         if not self.host.strip() or any(c.isspace() for c in self.host) or '\0' in self.host:
             raise SettingsError('OSC host must be an IP address or hostname without spaces.', 'host')
         if self.prefix and not re.fullmatch(r'[A-Za-z0-9_.-]+', self.prefix):
