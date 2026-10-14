@@ -148,4 +148,6 @@ Check: a figure-8 test with the axis enabled sends the initial zoom/iris level o
 
 ## References
 
+Selection-free alternative (research, not in the app yet): [PSN.md](PSN.md).
+
 MA's help: [XYZ activation](https://help.malighting.com/grandMA3/2.5/HTML/xyz_activate.html), [MArkers](https://help.malighting.com/grandMA3/2.5/HTML/xyz_marker.html), [stages and spaces](https://help.malighting.com/grandMA3/2.5/HTML/patch_stage.html), [OSC](https://help.malighting.com/grandMA3/2.5/HTML/remote_inputs_osc.html), [Percent input](https://help.malighting.com/grandMA3/2.5/HTML/keyword_percent_word.html).

@@ -41,10 +41,12 @@ current code and Git state, and preserve unrelated operator changes.
 | `settings.example.json` | Shareable example configuration; must equal the `Settings` defaults |
 | `requirements.txt` | Comment-only: records that there are no third-party packages |
 | `.coderabbit.yaml` | Review-bot configuration (docstring check off) |
+| `tools/psn_test_sender.py` | Stdlib PSN test sender for onPC; not used by the app (see docs/PSN.md) |
 | `tests/` | Core behavior, device backend, and headless window lifecycle tests |
 | `README.md` | Short overview: documentation index, quick start, launch, diagnostics |
 | `docs/GRANDMA3_SETUP.md` | Operator step-by-step onPC setup with commands, zoom/iris executor, troubleshooting |
 | `docs/OPERATING.md` | Operator guide: joystick, buttons, reset lock, zoom/iris, test mode, stop/restart, limitations |
+| `docs/PSN.md` | Verified PSN findings, onPC configuration, packet format, open design decisions |
 | `docs/superpowers/` | Original approved design and implementation plan; historical context |
 
 Runtime `settings.json` is operator-owned and ignored by Git. Do not overwrite
@@ -190,6 +192,11 @@ confirmation. An earlier “Select and open a joystick first” report was not
 reproduced. One plausible cause was fixed on 2026-10-09: an OSC send failure
 used to close the joystick, so the next Start showed that message. Do not
 claim the report is resolved without operator evidence.
+
+On 2026-10-14 the operator verified in onPC 2.5.0.3 that PSN packets move a
+MArker without touching the console selection or encoders (multicast
+236.10.10.10:56565 on lo0; MArker returns to 0, 0, 0 when packets stop).
+The app has no PSN output yet; see docs/PSN.md before designing one.
 
 Added since then: proportional zoom/iris axis, the figure-8 test mode with the
 step-by-step setup guide, and the Windows launcher. None has operator
