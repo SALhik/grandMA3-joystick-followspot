@@ -10,7 +10,7 @@ All physical fixture assignment and XYZ aiming stay in grandMA3. This tool does 
 | --- | --- |
 | [docs/GRANDMA3_SETUP.md](docs/GRANDMA3_SETUP.md) | Step-by-step onPC setup with every command, the figure-8 test, troubleshooting |
 | [docs/OPERATING.md](docs/OPERATING.md) | Joystick configuration, buttons, reset lock, zoom/iris, test mode, stop/restart, settings file, limitations |
-| [docs/PSN.md](docs/PSN.md) | Researched PSN alternative that moves the MArker without taking the console selection: findings, onPC setup, test sender (not yet an app output mode) |
+| [docs/PSN.md](docs/PSN.md) | Optional PSN position output that moves the MArker without taking the console selection: app and onPC setup, Stop vs Release marker, findings, test sender, packet format (checked with the test sender only) |
 | [AGENTS.md](AGENTS.md) | For AI agents and contributors: code map, workflow, integration contracts, verification limits |
 
 ## Quick start

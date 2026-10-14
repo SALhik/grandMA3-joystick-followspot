@@ -100,6 +100,8 @@ In the master controls menu, tap **Prog Time** until its green marker disappears
 
 Check in Terminal: `lsof -nP -iUDP:8000` should show onPC listening.
 
+To keep the console selection free, use PSN position output: see [PSN.md](PSN.md). Brightness, zoom / iris and buttons still need this OSC setup.
+
 ## Step 9. Enter the values in the tool
 
 Open the tool (`Launch Followspot.command`) and fill in these pages under **Setup**. Click **Save settings** when done.
@@ -147,7 +149,5 @@ Do this after the brightness executor works. The tool controls only a fader leve
 Check: a figure-8 test with the axis enabled sends the initial zoom/iris level once but does not move it, because the joystick is ignored in a test. Confirm zoom/iris movement with the joystick.
 
 ## References
-
-Selection-free alternative (research, not in the app yet): [PSN.md](PSN.md).
 
 MA's help: [XYZ activation](https://help.malighting.com/grandMA3/2.5/HTML/xyz_activate.html), [MArkers](https://help.malighting.com/grandMA3/2.5/HTML/xyz_marker.html), [stages and spaces](https://help.malighting.com/grandMA3/2.5/HTML/patch_stage.html), [OSC](https://help.malighting.com/grandMA3/2.5/HTML/remote_inputs_osc.html), [Percent input](https://help.malighting.com/grandMA3/2.5/HTML/keyword_percent_word.html).

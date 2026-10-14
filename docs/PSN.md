@@ -1,6 +1,6 @@
 # PSN: moving the MArker without taking the selection
 
-Status: **researched and verified with a test sender; not yet an output mode in the app.** Today the app moves the MArker only through OSC (see [GRANDMA3_SETUP.md](GRANDMA3_SETUP.md)). This page records what was found on 2026-10-14 so a PSN output option can be built and configured from it.
+Status: available as an optional output in the app (Setup → OSC → Position output). Verified in onPC 2.5.0.3 with the test sender; not yet checked with the real joystick or a real show. The default output still moves the MArker through OSC (see [GRANDMA3_SETUP.md](GRANDMA3_SETUP.md)). This page records what was found on 2026-10-14 and how to configure both sides.
 
 ## Why
 
@@ -18,7 +18,7 @@ Tested in onPC 2.5.0.3 on macOS with `tools/psn_test_sender.py`, observed by the
 - **Fixture Sheet and MArker encoders do not show the PSN position.** They stayed 0, 0, 0. This is a display quirk, not a failure to move.
 - **The MArker snaps back to 0, 0, 0 shortly after packets stop.** A PSN mode must keep streaming, including while the stick is idle. The exact timeout was not measured.
 
-Not verified: PSN with the real joystick, use in a real theatre show, how a stopped or crashed app behaves on stage (it drops to 0, 0, 0 by the point above), and the Windows case.
+Not verified: PSN with the real joystick, use in a real theatre show, how a stopped or crashed app behaves on stage (it drops to 0, 0, 0 by the point above), the app's own PSN stream received by onPC, and the Windows case.
 
 ## Transport that worked
 
@@ -42,6 +42,39 @@ Menu paths are from MA's [PSN help](https://help.malighting.com/grandMA3/2.5/HTM
 
 Check with `lsof -nP -iUDP:56565` that onPC listens. The System Monitor shows OSC, not PSN, so it does not help here.
 
+## Configure the app
+
+1. Stop output and open **Setup → OSC**.
+2. Set **Position output** to `psn`. Leave the PSN tracker ID, multicast group, port and interface at their defaults when onPC runs on this Mac (tracker 1, `236.10.10.10`, `56565`, interface `127.0.0.1`), and match the tracker ID to the PSN row in onPC.
+3. **Save settings**, then Start. The Live view shows a **Release marker** button while PSN is selected or a stream is open.
+
+What changes in PSN mode: the app no longer sends `ClearSelection; MArker ...`, so your selection and encoders stay free. Brightness, zoom / iris and buttons still go over OSC, so the OSC setup in [GRANDMA3_SETUP.md](GRANDMA3_SETUP.md) is still needed. The MArker is chosen by the PSN row in onPC, so the app's MArker CID and movement space are not used for conversion in PSN mode, but they must still be valid settings.
+
+**Stop and Release marker.** PSN has no hold: if packets stop, onPC resets the MArker to 0, 0, 0. So **Stop keeps sending the last position** and the lights stay put; **Release marker** (Live button, or a button mapped to "Release PSN marker") ends the stream, and the MArker then resets to 0, 0, 0. Release marker also stops output if it is running. Closing the window asks before it does this. If the app crashes or the computer sleeps, the stream stops and the MArker resets. A joystick disconnect or an OSC failure stops output but keeps the stream holding.
+
+The PSN selector and fields can still be edited while a stream is held and output is stopped, but Save settings, Start and the stopped Reset button refuse to apply a changed PSN setting until you Release marker. While a stream is held and output is stopped, the Live position shows a second "Held at" line, because the displayed target (changed by Reset or edits) may differ from what onPC is holding; the next Start sends the displayed target. A stream failure (for example a socket error) is shown as a PSN fault and stays until the next Start or Release marker; the MArker then resets in onPC.
+
+The Fixture Sheet and the MArker encoders do not show the PSN position (they read 0, 0, 0); use the 3D view or the PSN row.
+
+## Script on a different computer (unverified)
+
+Not tested. The same-Mac setup above is the only verified one. In principle:
+
+1. Put both computers on the same network segment. PSN is multicast UDP, so the switch or Wi-Fi must pass multicast (IGMP snooping misconfigured, or Wi-Fi multicast filtering, are common causes of silence).
+2. In onPC, set the PSN **Interface** to onPC's network interface instead of `lo0`, and keep the multicast group and port.
+3. In the app, set **PSN interface** to this computer's IPv4 address on that same network (not `127.0.0.1`).
+4. OSC still needs its own setup: set **onPC host / IP** and the OSC Interface as in [GRANDMA3_SETUP.md](GRANDMA3_SETUP.md) Step 8.
+5. A VPN can take the default multicast route. On the test Mac, sending multicast through the LAN interface failed with "No route to host" because the default multicast route went through the VPN tunnel; disconnect the VPN or add a multicast route for the interface.
+
+Check with `lsof -nP -iUDP:56565` on the onPC computer and watch the tracker in the PSN menu.
+
+## Troubleshooting
+
+- **Tracker stays red:** check the PSN Interface in onPC against the app's PSN interface, that the tracker ID matches the app's PSN tracker ID, that the row's MArker ID is the MArker's CID, and that **Input** is enabled. Confirm the app is streaming (Start, or a held stream after Stop).
+- **The MArker moves, then jumps to 0, 0, 0:** the stream stopped. Release marker was pressed, the window was closed, the app stopped, or a PSN fault was shown in Diagnostics.
+- **Nothing moves although the tracker is not red:** check **Requested** on the tracker and that the universe's **Merge Mode** is **Prio**.
+- **A PSN fault reports "No route to host" or the stream fails right after Start:** the multicast route for the chosen interface is wrong; see the VPN note in the previous section. Start itself reports an error if the socket cannot be opened or the interface address is invalid.
+
 ## Test sender
 
 `tools/psn_test_sender.py` is stdlib-only and sends no OSC. Run it on the same Mac as onPC:
@@ -61,8 +94,9 @@ PSN v2.03, UDP, little-endian chunks. A chunk header is a uint32: `id | (data_le
 
 The encoder was cross-checked by decoding its packets with the PSN-CPP reference library.
 
-## Open decisions for an app output mode
+## Open risks
 
-- Keep brightness and zoom/iris on OSC faders; PSN would carry position only.
-- PSN needs continuous sending (about 30 Hz) even when the stick is idle, which reverses the OSC rule of no idle resend. Stopping output stops the stream and the MArker returns to 0, 0, 0 unless Stop keeps sending the held position.
-- AGENTS.md (integration contracts), the setup guide and the settings example would change with it.
+- The MArker snap-back timeout was not measured, so how long a stalled app can go without the marker resetting is unknown.
+- macOS App Nap or background throttling could delay the sender thread beyond that timeout; the thread is not proven immune. Keep the Live view in front during shows.
+- Whether PSN wants separate frame counters for INFO and DATA (the app and the test sender share one), and whether onPC applies its Map or offset to the received metres, were not checked.
+- Absolute-metre positions were checked at a few points only; the Movement Space bounds may still matter at extremes.
