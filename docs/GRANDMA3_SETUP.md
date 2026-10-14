@@ -24,7 +24,7 @@ Check: `List Attribute` shows `XYZ_X`, `XYZ_Y`, `XYZ_Z` for the MArker.
 
 1. **Patch → Stages → Edit → Spaces**: find the MArker's **Movement Space**.
 2. Write down its X, Y and Z **minimum and maximum**.
-3. Later you will type these into the tool's **Target / stage → MArker movement space** fields (Step 9). The tool converts metres to the 0–100 % attribute value with them, so they must match exactly. This is not the stage box and not the Target Space. The tool's defaults are an example 200 m cube centred on the origin, not measured geometry.
+3. Later you will type these into the tool's **Setup → Target / stage → MArker movement space** fields (Step 9). The tool converts metres to the 0–100 % attribute value with them, so they must match exactly. This is not the stage box and not the Target Space. The tool's defaults are an example 200 m cube centred on the origin, not measured geometry.
 4. For the first version use an unrotated stage and space.
 
 ## Step 4. Set a small Target Space
@@ -94,7 +94,7 @@ In the master controls menu, tap **Prog Time** until its green marker disappears
 | FaderRange | 100 |
 | Prefix | empty |
 
-4. Choose the **Interface** that onPC listens on. The tool's default host is `127.0.0.1`. If onPC uses your Mac's Ethernet or Wi-Fi address, put **that IP** in the tool's **OSC → onPC host / IP** field. Do not assume loopback works.
+4. Choose the **Interface** that onPC listens on. The tool's default host is `127.0.0.1`. If onPC uses your Mac's Ethernet or Wi-Fi address, put **that IP** in the tool's **Setup → OSC → onPC host / IP** field. Do not assume loopback works.
 5. Leave outgoing echo and command transmission off unless you need them. The row's Destination IP only affects OSC that onPC sends out.
 6. **In an existing show, check the other OSC rows first.** A show that already has an OSC row (for example row 1, set up for another controller) can stop this tool from working even though a blank test show works: MA showed the incoming messages and reported no error, but the marker never moved. The cause is probably that the older row handled the messages with its own settings, but this is not verified. Removing the old row fixed it in one theatre show. Delete or disable any other row that uses the same port (8000), or make it match the table above, and keep only one row for this tool.
 
@@ -102,18 +102,18 @@ Check in Terminal: `lsof -nP -iUDP:8000` should show onPC listening.
 
 ## Step 9. Enter the values in the tool
 
-Open the tool (`Launch Followspot.command`) and fill in these tabs. Click **Save / apply settings** when done.
+Open the tool (`Launch Followspot.command`) and fill in these pages under **Setup**. Click **Save settings** when done.
 
 | Tab | Fields |
 | --- | --- |
 | Target / stage | MArker CID, Z height, operating limits, initial X/Y, **movement space min/max from Step 3** |
-| OSC | host/IP, port 8000, empty prefix, brightness executor page and number (1 and 201 in the example) |
-| Zoom / iris (optional) | enable, axis, executor page and number (1 and 202 in the example); see the last section |
+| OSC | host/IP, port 8000, empty prefix |
+| Brightness / zoom | brightness executor page and number (1 and 201 in the example); optional zoom/iris axis and executor (1 and 202); see the last section |
 
 ## Step 10. Test without the joystick (figure 8)
 
-1. In the tool, open **Live** and click **Start test (figure 8)**.
-2. The marker traces a figure 8 around the initial target, and the executor fader is held at the test brightness (100 % by default). Tune size, lap time and brightness on the **Test** tab.
+1. In the tool, open **Diagnostics** and click **Start test (figure 8)**. This sends real output.
+2. The marker traces a figure 8 around the initial target, and the executor fader is held at the test brightness (100 % by default). Tune size, lap time and brightness in Diagnostics before starting.
 3. Watch the 3D view, the beams, and the executor fader moving in onPC.
 4. Click **Stop output** to end the test. The marker stays where it stopped.
 
@@ -127,11 +127,11 @@ If nothing moves:
 
 ## Step 11. Connect the joystick
 
-1. Go to **Controls**, select the PXN joystick and click **Refresh** if it is missing.
+1. Go to **Setup → Joystick**, select the PXN joystick and click **Refresh** if it is missing.
 2. Click **Learn** beside X, Y and Brightness, then move only that control. Axis numbers start at 0.
-3. Release the stick and click **Calibrate centre**. Set inversion, dead zone and maximum speed.
-4. Optional: map buttons on the **Buttons** tab, and enable zoom/iris (see below and [OPERATING.md](OPERATING.md)).
-5. **Save / apply settings**, then **Start output**.
+3. Release the stick and click **Calibrate stick centre**. Set inversion, dead zone (%) and maximum speed.
+4. Optional: map buttons in **Setup → Buttons**, and enable zoom/iris (see below and [OPERATING.md](OPERATING.md)).
+5. **Save settings**, then **Start output**.
 
 ## Optional: zoom / iris executor
 
@@ -142,7 +142,7 @@ Do this after the brightness executor works. The tool controls only a fader leve
 3. Establish the desired underlying value for the low end of the fader, and store the desired high-end value in the Temp cue.
 4. Clear those values from the programmer, then move the fader by hand through its full travel and confirm the zoom or iris behaves as expected.
 5. Keep **FaderRange = 100** on the OSC row (Step 8).
-6. In the tool open **Zoom / iris**, enable the axis, enter the executor page and number, then learn and calibrate the axis (see [OPERATING.md](OPERATING.md#optional-zoom--iris-control)).
+6. In the tool open **Setup → Brightness / zoom**, enable the axis, enter the executor page and number, then learn and calibrate the axis (see [OPERATING.md](OPERATING.md#optional-zoom--iris-control)).
 
 Check: a figure-8 test with the axis enabled sends the initial zoom/iris level once but does not move it, because the joystick is ignored in a test. Confirm zoom/iris movement with the joystick.
 

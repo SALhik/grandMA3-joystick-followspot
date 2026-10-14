@@ -21,6 +21,13 @@ def clamp(value, low, high):
     return max(low, min(high, value))
 
 
+class SettingsError(ValueError):
+    """A validation error with the fields an editor should highlight."""
+    def __init__(self, message, *fields):
+        super().__init__(message)
+        self.fields = fields
+
+
 @dataclass
 class Settings:
     device_name: str = 'PXN-2113 Pro'
@@ -90,69 +97,76 @@ class Settings:
             value = getattr(self, name)
             if kind is float:
                 if isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value):
-                    raise ValueError(f'{name} must be a finite number.')
+                    raise SettingsError(f'{name} must be a finite number.', name)
             elif kind is int:
                 if type(value) is not int:
-                    raise ValueError(f'{name} must be a whole number.')
+                    raise SettingsError(f'{name} must be a whole number.', name)
             elif kind is bool and type(value) is not bool:
-                raise ValueError(f'{name} must be true or false.')
+                raise SettingsError(f'{name} must be true or false.', name)
             elif kind is str and not isinstance(value, str):
-                raise ValueError(f'{name} must be text.')
-        if not 0 <= self.dead_zone < 0.9 or not 0 < self.max_speed <= 100:
-            raise ValueError('Dead zone must be 0–0.89; maximum speed must be greater than 0 and at most 100 m/s.')
+                raise SettingsError(f'{name} must be text.', name)
+        if not 0 <= self.dead_zone < 0.9:
+            raise SettingsError('Dead zone must be at least 0% and below 90%.', 'dead_zone')
+        if not 0 < self.max_speed <= 100:
+            raise SettingsError('Maximum speed must be greater than 0 and at most 100 m/s.', 'max_speed')
         if any(not -0.9 <= v <= 0.9 for v in (self.centre_x, self.centre_y)):
-            raise ValueError('Calibrate with the stick near its centre.')
+            raise SettingsError('Calibrate with the stick near its centre.', 'centre_x', 'centre_y')
         if min(self.axis_x, self.axis_y, self.axis_slider) < 0 or len({self.axis_x, self.axis_y, self.axis_slider}) != 3:
-            raise ValueError('Select three different, non-negative axis numbers.')
+            raise SettingsError('Select three different, non-negative axis numbers.', 'axis_x', 'axis_y', 'axis_slider')
         if self.axis_zoom < 0 or (self.zoom_enabled and self.axis_zoom in (self.axis_x, self.axis_y, self.axis_slider)):
-            raise ValueError('Choose a separate, non-negative zoom/iris axis.')
+            raise SettingsError('Choose a separate, non-negative zoom/iris axis.', 'axis_zoom')
         if not -0.9 <= self.centre_zoom <= 0.9:
-            raise ValueError('Calibrate with the zoom/iris control near its centre.')
-        if not 0 <= self.zoom_dead_zone < 0.9 or not 0 < self.zoom_speed <= 1000:
-            raise ValueError('Zoom/iris dead zone must be 0–0.89; speed must be greater than 0 and at most 1000 percentage points/s.')
+            raise SettingsError('Calibrate with the zoom/iris control near its centre.', 'centre_zoom')
+        if not 0 <= self.zoom_dead_zone < 0.9:
+            raise SettingsError('Zoom/iris dead zone must be at least 0% and below 90%.', 'zoom_dead_zone')
+        if not 0 < self.zoom_speed <= 1000:
+            raise SettingsError('Zoom/iris speed must be greater than 0 and at most 1000 percentage points/s.', 'zoom_speed')
         if not 0 <= self.initial_zoom <= 100:
-            raise ValueError('Initial zoom/iris level must be 0–100%.')
+            raise SettingsError('Initial zoom/iris level must be 0–100%.', 'initial_zoom')
         if min(self.zoom_executor_page, self.zoom_executor_number) < 1:
-            raise ValueError('Zoom/iris executor page and number must be positive.')
+            raise SettingsError('Zoom/iris executor page and number must be positive.', 'zoom_executor_page', 'zoom_executor_number')
         if self.zoom_enabled and (self.zoom_executor_page, self.zoom_executor_number) == (self.executor_page, self.executor_number):
-            raise ValueError('Zoom/iris and brightness must use different executors.')
+            raise SettingsError('Zoom/iris and brightness must use different executors.', 'zoom_executor_page', 'zoom_executor_number', 'executor_page', 'executor_number')
         for axis in ('x', 'y', 'z'):
             lo, hi = getattr(self, f'space_{axis}_min'), getattr(self, f'space_{axis}_max')
             if lo >= hi:
-                raise ValueError(f'{axis.upper()} movement-space minimum must be below maximum.')
+                raise SettingsError(f'{axis.upper()} movement-space minimum must be below maximum.', f'space_{axis}_min', f'space_{axis}_max')
             if axis != 'z':
                 a, b = getattr(self, f'{axis}_min'), getattr(self, f'{axis}_max')
                 initial = getattr(self, f'initial_{axis}')
                 if not lo <= a < b <= hi or not a <= initial <= b:
-                    raise ValueError(f'{axis.upper()} operating limits and initial position must fit inside the movement space.')
+                    raise SettingsError(f'{axis.upper()} operating limits and initial position must fit inside the movement space.', f'{axis}_min', f'{axis}_max', f'initial_{axis}', f'space_{axis}_min', f'space_{axis}_max')
             elif not lo <= self.z <= hi:
-                raise ValueError('Z height must fit inside the Z movement space.')
+                raise SettingsError('Z height must fit inside the Z movement space.', 'z', 'space_z_min', 'space_z_max')
         if not 0 < self.test_size <= 100 or not 2 <= self.test_period <= 600 or not 0 <= self.test_brightness <= 100:
-            raise ValueError('Test size must be 0–100 m, period 2–600 s and brightness 0–100%.')
-        if min(self.marker_id, self.executor_page, self.executor_number) < 1 or not 1 <= self.port <= 65535:
-            raise ValueError('IDs must be positive; OSC port must be 1–65535.')
+            raise SettingsError('Test size must be greater than 0 and at most 100 m, period 2–600 s and brightness 0–100%.', 'test_size', 'test_period', 'test_brightness')
+        for key in ('marker_id', 'executor_page', 'executor_number'):
+            if getattr(self, key) < 1:
+                raise SettingsError('IDs must be positive.', key)
+        if not 1 <= self.port <= 65535:
+            raise SettingsError('OSC port must be 1–65535.', 'port')
         if not self.host.strip() or any(c.isspace() for c in self.host) or '\0' in self.host:
-            raise ValueError('OSC host must be an IP address or hostname without spaces.')
+            raise SettingsError('OSC host must be an IP address or hostname without spaces.', 'host')
         if self.prefix and not re.fullmatch(r'[A-Za-z0-9_.-]+', self.prefix):
-            raise ValueError('OSC prefix must contain only letters, numbers, dot, underscore or hyphen, without slashes.')
-        for name in (self.attribute_x, self.attribute_y, self.attribute_z):
-            if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*', name):
-                raise ValueError('Use a valid MA attribute library name.')
+            raise SettingsError('OSC prefix must contain only letters, numbers, dot, underscore or hyphen, without slashes.', 'prefix')
+        for key in ('attribute_x', 'attribute_y', 'attribute_z'):
+            if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*', getattr(self, key)):
+                raise SettingsError('Use a valid MA attribute library name.', key)
         if not isinstance(self.buttons, dict):
-            raise ValueError('Button mappings must be an object.')
+            raise SettingsError('Button mappings must be an object.', 'buttons')
         for key, mapping in self.buttons.items():
             if not isinstance(key, str) or not key.isascii() or not key.isdecimal() or str(int(key)) != key:
-                raise ValueError('Button IDs must be zero-based whole numbers.')
+                raise SettingsError('Button IDs must be zero-based whole numbers.', 'buttons')
             if not isinstance(mapping, dict) or set(mapping) - {'action', 'press', 'release'}:
-                raise ValueError('Each button has an action and optional press/release commands.')
+                raise SettingsError('Each button has an action and optional press/release commands.', 'buttons')
             action = mapping.get('action', 'command')
             if not isinstance(action, str) or action not in BUTTON_ACTIONS:
-                raise ValueError('Choose a valid button action.')
+                raise SettingsError('Choose a valid button action.', 'buttons')
             for command in mapping.values():
                 if not isinstance(command, str) or '\0' in command or len(command.encode('utf-8')) > 4096:
-                    raise ValueError('Button commands must be text up to 4096 bytes with no null characters.')
+                    raise SettingsError('Button commands must be text up to 4096 bytes with no null characters.', 'buttons')
             if action != 'command' and any(mapping.get(edge, '').strip() for edge in ('press', 'release')):
-                raise ValueError('Local button actions cannot also send MA commands.')
+                raise SettingsError('Local button actions cannot also send MA commands.', 'buttons')
 
     def save(self, path):
         self.validate()

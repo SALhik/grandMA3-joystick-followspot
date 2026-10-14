@@ -2,6 +2,8 @@
 import unittest
 import tempfile
 import time
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -46,7 +48,7 @@ class WindowTests(unittest.TestCase):
         app.settings_path = Path(folder.name) / 'settings.json'
         app.settings = Settings.from_dict(dict(Settings().to_dict(), **changes))
         app.settings.save(app.settings_path)
-        app.values = {key: Value(value) for key, value in app.settings.to_dict().items() if key != 'buttons'}
+        app.values = {key: Value(followspot.display_value(key, value)) for key, value in app.settings.to_dict().items() if key != 'buttons'}
         app.draft_buttons = dict(app.settings.buttons)
         app.axes, app.buttons = [0, 0, 0], [False] * 3
         app.button_edges = ButtonEdges()
@@ -56,9 +58,10 @@ class WindowTests(unittest.TestCase):
         app.controller = Controller(app.settings, app.send)
         for name in ('status', 'output_label', 'position_label', 'brightness_label', 'zoom_label',
                      'axes_label', 'buttons_label', 'device_label', 'button_id',
-                     'press_command', 'release_command'):
+                     'press_command', 'release_command', 'fault_label'):
             setattr(app, name, Value())
         app.button_action = Value('MA command')
+        app.faults = {}
         for name in ('start_button', 'test_button', 'reset_button', 'save_button', 'press_entry', 'release_entry'):
             setattr(app, name, Widget())
         app.setting_tabs = ['controls', 'target', 'network', 'mappings']
@@ -72,6 +75,14 @@ class WindowTests(unittest.TestCase):
         app.last_tick = time.monotonic()
         app.last_ui = 0
         app.root = SimpleNamespace(after=lambda *args: None)
+        def set_running(running):
+            for name in ('start_button', 'test_button', 'save_button'):
+                getattr(app, name).configure(state='disabled' if running else 'normal')
+            app.reset_button.configure(state='disabled' if running and app.settings.reset_locked else 'normal')
+        app.view = SimpleNamespace(refresh=lambda: None, set_running=set_running,
+                                   show_error=lambda exc: None, clear_errors=lambda: None,
+                                   mapping_pending=lambda: False, editor_loaded=lambda: None,
+                                   set_feedback=lambda *args: None, restore_selection=lambda: None)
         app.errors = []
         app.messagebox = SimpleNamespace(showerror=lambda *args: app.errors.append(args))
         def new_sender(*args):
@@ -170,6 +181,38 @@ class WindowTests(unittest.TestCase):
             followspot.settings_from_values(values, {})
         values['axis_x'].set('0')
         self.assertEqual(followspot.settings_from_values(values, {}).axis_x, 0)
+
+    def test_dead_zone_percentages_are_saved_as_fractions(self):
+        app, _ = self.app()
+        app.values['dead_zone'].set('12.5')
+        app.values['zoom_dead_zone'].set('20')
+        self.assertTrue(app.apply_settings())
+        saved = Settings.load(app.settings_path)
+        self.assertEqual((saved.dead_zone, saved.zoom_dead_zone), (0.125, 0.2))
+
+    def test_opening_and_saving_preserves_dead_zone_precision(self):
+        app, _ = self.app(dead_zone=0.123456789, zoom_dead_zone=0.234567891)
+        self.assertTrue(app.apply_settings())
+        saved = Settings.load(app.settings_path)
+        self.assertEqual((saved.dead_zone, saved.zoom_dead_zone), (0.123456789, 0.234567891))
+
+    def test_oversized_percentage_reports_a_field_error(self):
+        app, _ = self.app()
+        app.values['dead_zone'].set('1e100000000')
+        with self.assertRaises(ValueError) as error:
+            followspot.settings_from_values(app.values, {})
+        self.assertIn('dead_zone', error.exception.fields)
+
+    def test_invalid_field_identifies_the_setting_without_saving(self):
+        app, _ = self.app()
+        app.values['port'].set('70000')
+        try:
+            followspot.settings_from_values(app.values, {})
+        except ValueError as exc:
+            self.assertIn('port', getattr(exc, 'fields', ()))
+        else:
+            self.fail('Invalid port was accepted')
+        self.assertEqual(Settings.load(app.settings_path).port, 8000)
 
     def test_disconnect_stops_controller_and_closes_sender(self):
         app, messages = self.app(buttons={'0': {'press': 'Down', 'release': 'Up'}})
@@ -277,7 +320,7 @@ class WindowTests(unittest.TestCase):
         app.start_output()
         self.assertFalse(app.controller.active)
         self.assertEqual(messages, [])
-        self.assertIn('Select a joystick in Controls', app.errors[-1][1])
+        self.assertIn('Select a joystick in Setup', app.errors[-1][1])
 
     def test_mapped_start_and_toggle_work_once_per_press_while_stopped(self):
         app, messages = self.app(buttons={'0': {'action': 'start'}, '1': {'action': 'toggle'}})
@@ -483,6 +526,171 @@ class RealWindowTests(unittest.TestCase):
         except tk.TclError as exc:
             self.skipTest(f'Tk window unavailable: {exc}')
 
+    def open_app(self, **changes):
+        root = self.open_root()
+        root.withdraw()
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        path = Path(folder.name) / 'settings.json'
+        Settings(**changes).save(path)
+        joystick_patch = patch.object(followspot, 'Joystick', FakeJoystick)
+        sender_patch = patch.object(followspot, 'OscSender', side_effect=lambda *args: Sender([]))
+        joystick_patch.start()
+        sender_patch.start()
+        self.addCleanup(joystick_patch.stop)
+        self.addCleanup(sender_patch.stop)
+        app = followspot.App(root, path)
+        self.addCleanup(app.close)
+        return app
+
+    def test_visible_window_with_real_backend_starts_and_polls_without_aborting(self):
+        # A child process is necessary: a native Tk/SDL abort kills the interpreter.
+        # No output is started and only temporary settings are used.
+        try:
+            import tkinter
+        except ImportError as exc:
+            self.skipTest(f'Tk unavailable: {exc}')
+        program = '''
+import tempfile
+from pathlib import Path
+import tkinter as tk
+import sys
+from followspot import App
+with tempfile.TemporaryDirectory() as folder:
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        print(exc, file=sys.stderr)
+        sys.exit(77)
+    errors = []
+    root.report_callback_exception = lambda *args: errors.append(str(args))
+    app = App(root, Path(folder) / 'settings.json')
+    def check_paint():
+        root.update_idletasks()
+        assert app.start_button.winfo_ismapped()
+        assert app.view.stage.winfo_ismapped()
+        assert app.view.stage.winfo_width() > 160
+        assert app.view.stage.winfo_height() > 130
+    root.after(100, check_paint)
+    root.after(500, app.close)
+    root.mainloop()
+    assert not errors, errors
+'''
+        result = subprocess.run([sys.executable, '-c', program], cwd=Path(followspot.__file__).parent,
+                                capture_output=True, text=True, timeout=45)
+        if result.returncode == 77:
+            self.skipTest(f'Tk window unavailable: {result.stderr.strip()}')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_setup_is_readable_but_cannot_be_edited_while_running(self):
+        app = self.open_app()
+        app.start_output()
+        app.notebook.select(1)
+        self.assertEqual(str(app.notebook.tab(1, 'state')), 'normal')
+        self.assertEqual(str(app.view.fields['host']['state']), 'disabled')
+        self.assertEqual(str(app.stop_button['state']), 'normal')
+        app.stop_output()
+        self.assertEqual(str(app.view.fields['host']['state']), 'normal')
+
+    def test_readiness_disables_start_without_blocking_joystick_free_test(self):
+        app = self.open_app()
+        app.joystick.close()
+        app.view.refresh()
+        self.assertEqual(str(app.start_button['state']), 'disabled')
+        self.assertIn('joystick', app.view.readiness.get().lower())
+        self.assertEqual(str(app.test_button['state']), 'normal')
+        app.test_button.invoke()
+        self.assertTrue(app.controller.active and app.controller.test)
+
+    def test_readiness_uses_the_draft_that_start_will_apply(self):
+        app = self.open_app(axis_slider=7)
+        self.assertEqual(str(app.start_button['state']), 'disabled')
+        app.values['axis_slider'].set('2')
+        self.assertEqual(str(app.start_button['state']), 'normal')
+        app.values['port'].set('invalid')
+        self.assertEqual(str(app.start_button['state']), 'disabled')
+        app.values['port'].set('8000')
+        app.press_command.set('Go+ Sequence 10')
+        self.assertEqual(str(app.start_button['state']), 'disabled')
+
+    def test_rejected_mapping_selection_restores_the_edited_row(self):
+        app = self.open_app(buttons={'0': {'press': 'First'}, '1': {'press': 'Second'}})
+        app.button_table.selection_set('0')
+        app.load_button()
+        app.press_command.set('Edited first')
+        app.button_table.selection_set('1')
+        app.load_button()
+        self.assertEqual(app.button_table.selection(), ('0',))
+        self.assertEqual(app.press_command.get(), 'Edited first')
+        app.view.discard_editor()
+        self.assertEqual(app.press_command.get(), 'First')
+        self.assertEqual(app.button_table.selection(), ('0',))
+
+    def test_successful_reset_lock_retry_clears_its_own_fault(self):
+        app = self.open_app()
+        app.values['reset_locked'].set(False)
+        path = app.settings_path
+        app.settings_path = path / 'missing'
+        with patch('tkinter.messagebox.showerror'):
+            app.set_reset_lock()
+        self.assertIn('Reset lock', app.fault_label.get())
+        app.settings_path = path
+        app.values['reset_locked'].set(False)
+        app.set_reset_lock()
+        self.assertEqual(app.fault_label.get(), '')
+
+    def test_unsaved_changes_and_field_error_survive_a_failed_save(self):
+        app = self.open_app()
+        app.values['port'].set('invalid')
+        self.assertIn('Unsaved', app.view.save_state.get())
+        self.assertFalse(app.apply_settings())
+        self.assertTrue(app.view.fields['port'].instate(['invalid']))
+        self.assertEqual(app.notebook.index(app.notebook.select()), 1)
+        self.assertEqual(Settings.load(app.settings_path).port, 8000)
+        app.values['port'].set('9000')
+        self.assertTrue(app.apply_settings())
+        self.assertFalse(app.view.fields['port'].instate(['invalid']))
+        self.assertEqual(app.view.save_state.get(), 'Settings saved')
+
+    def test_fault_persists_through_routine_status_and_stop(self):
+        app = self.open_app()
+        app.start_output()
+        app.sender.fail = True
+        app.axes = [0, 0, 1]
+        app.joystick.read = lambda: (app.axes, [False, False])
+        app.poll()
+        self.assertIn('send failed', app.fault_label.get())
+        app.stop_output()
+        app.status.set('Centre captured')
+        self.assertIn('send failed', app.fault_label.get())
+        app.start_output()
+        self.assertEqual(app.fault_label.get(), '')
+
+    def test_mapping_editor_cannot_silently_discard_pending_commands(self):
+        app = self.open_app()
+        app.press_command.set('Go+ Sequence 10')
+        self.assertFalse(app.apply_settings())
+        self.assertIn('mapping', app.view.mapping_state.get().lower())
+        self.assertEqual(Settings.load(app.settings_path).buttons, {})
+        app.set_button()
+        self.assertTrue(app.apply_settings())
+        self.assertEqual(Settings.load(app.settings_path).buttons['0']['press'], 'Go+ Sequence 10')
+
+    def test_stage_preview_uses_applied_limits_and_never_moves_target(self):
+        app = self.open_app(x_min=-4, x_max=8, y_min=-2, y_max=6)
+        app.controller.motion.xyz = [8, 6, 1.5]
+        app.update_position()
+        app.root.update_idletasks()
+        app.view.draw_stage()
+        before = list(app.controller.motion.xyz)
+        app.values['x_max'].set('20')
+        app.view.stage.event_generate('<Button-1>', x=100, y=100)
+        self.assertEqual(app.controller.motion.xyz, before)
+        point = app.view.stage.coords('target')
+        limits = app.view.stage.coords('limits')
+        self.assertAlmostEqual((point[0] + point[2]) / 2, limits[2])
+        self.assertAlmostEqual((point[1] + point[3]) / 2, limits[1])
+
     def test_real_window_zoom_tab_learns_calibrates_and_resets(self):
         root = self.open_root()
         root.withdraw()
@@ -500,7 +708,7 @@ class RealWindowTests(unittest.TestCase):
              patch('tkinter.messagebox.showerror', side_effect=lambda *args: errors.append(args)):
             app = followspot.App(root, path)
             try:
-                self.assertIn('Zoom / iris', [app.notebook.tab(tab, 'text') for tab in app.notebook.tabs()])
+                self.assertIn('Brightness / zoom', [app.view.setup_tabs.tab(tab, 'text') for tab in app.view.setup_tabs.tabs()])
                 app.calibrate_zoom()
                 app.start_output()
                 self.assertEqual(errors, [])
@@ -530,7 +738,8 @@ class RealWindowTests(unittest.TestCase):
                 self.assertTrue(app.controller.active)
                 self.assertEqual(len(messages), 2)
                 self.assertEqual(str(app.start_button['state']), 'disabled')
-                self.assertEqual(str(app.notebook.tab(1, 'state')), 'disabled')
+                self.assertEqual(str(app.notebook.tab(1, 'state')), 'normal')
+                self.assertEqual(str(app.view.fields['host']['state']), 'disabled')
                 app.poll()
                 app.stop_output()
                 self.assertEqual(str(app.start_button['state']), 'normal')

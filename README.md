@@ -16,7 +16,7 @@ All physical fixture assignment and XYZ aiming stay in grandMA3. This tool does 
 
 1. Set up onPC on a test show by following [docs/GRANDMA3_SETUP.md](docs/GRANDMA3_SETUP.md). The script does not edit your showfile.
 2. Launch the tool (below). Output starts **stopped** every time.
-3. Check the setup with **Start test (figure 8)**; no joystick is needed.
+3. In **Diagnostics**, check the setup with **Start test (figure 8)**; no joystick is needed. This sends real OSC output.
 4. Connect and calibrate the joystick, then start output, as described in [docs/OPERATING.md](docs/OPERATING.md).
 
 ## Launch

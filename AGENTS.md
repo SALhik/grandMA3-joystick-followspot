@@ -33,6 +33,7 @@ current code and Git state, and preserve unrelated operator changes.
 | File | Responsibility |
 | --- | --- |
 | `followspot.py` | Tkinter window, settings editor, device selection/learning, polling, start/stop lifecycle, diagnostic CLI |
+| `followspot_ui.py` | Native Live/Setup/Diagnostics views, read-only stage/level previews, draft/readiness feedback, field-error navigation and scroll layout |
 | `followspot_core.py` | Settings validation/persistence, proportional motion, coordinate conversion, OSC encoding/sending, the button edge tracker and output controller |
 | `joystick.py` | SDL2 and native macOS HID readers via `ctypes`, normalization and the combined device list |
 | `Launch Followspot.command` | Selects a Tk-capable Python and launches the window |
@@ -92,6 +93,14 @@ failures; never report skipped or blocked hardware checks as passing.
 - Test mode (`Controller.start(test=True)`) needs no joystick: a figure 8 around the initial X/Y (`figure_eight`) and fixed `test_brightness`. `poll` skips joystick reads and button processing while a test runs; failures stop output like normal.
 - Settings changes require stopped output. Release commands must be attempted
   before closing the sender, and release failures must remain visible.
+- Setup and Diagnostics stay readable while running; disable editors, not tabs.
+  Dead zones display as percentages but persist as fractions. Incomplete button
+  editor changes must be added/updated or discarded before saving/starting.
+  Faults are separate from routine status; release warnings require acknowledgement.
+- On macOS, SDL enumeration can dispatch Tk drawing events outside `_tkinter`'s
+  call boundary. Do not use Python Configure or scrollbar callbacks for layout:
+  update layout from normal polling and use native Tcl widget commands for scrollbars.
+  The visible-window subprocess test exercises the real backend without sending OSC.
 - The saved `reset_locked` flag defaults to true. Its Live toggle is available
   while running and saves only that flag, leaving other settings drafts unapplied.
   Stopped Reset is local; unlocked live Reset immediately resends initial X/Y/Z
@@ -165,7 +174,7 @@ macOS access denials; do not treat an empty SDL list as proof that Input
 Monitoring permission is missing.
 
 Some agent sandboxes deny native Tk window creation, and some Python installs
-(for example Homebrew's default `python3`) lack `_tkinter`; the two real-window
+(for example Homebrew's default `python3`) lack `_tkinter`; the real-window
 tests skip in both cases. Sandboxes may also deny physical HID reads, process
 inspection, UDP operations, or network/GitHub access. Automated tests and packet
 encoding checks cannot establish end-to-end operation. Use a normal macOS
@@ -189,8 +198,9 @@ launcher on real hardware remain unverified.
 
 Automated coverage: core motion/configuration/OSC-packet tests, simulated SDL
 input/disconnect, native HID discovery and combined-list tests with doubles,
-headless window lifecycle tests (including zoom/iris and test mode), and two real
-Tk window tests that skip when Tk is missing or cannot open a window. The
+headless window lifecycle tests (including zoom/iris and test mode), real Tk
+workflow tests, and a visible startup test with the real backend. Tk tests skip
+when Tk is missing or cannot open a window. The
 Windows launcher has no automated coverage. MA's installed 2.5 system tests
 confirm the `XYZ_X`, `XYZ_Y`, `XYZ_Z`, and `XYZ_MArker` attribute names.
 

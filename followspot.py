@@ -2,13 +2,16 @@
 """Small joystick-to-grandMA3 controller. Run directly or use the launcher."""
 import argparse
 from dataclasses import replace
+from decimal import Decimal
 import json
+import math
 from pathlib import Path
 import sys
 import time
 
-from followspot_core import (BUTTON_ACTIONS, ButtonEdges, Controller, OscSender, Settings, clamp,
+from followspot_core import (BUTTON_ACTIONS, ButtonEdges, Controller, OscSender, Settings, SettingsError, clamp,
                               learn_axis, local_actions, setting_types)
+from followspot_ui import AXIS_NAMES, PERCENT_FIELDS, FollowspotView, display_value
 from joystick import Joystick
 
 SETTINGS_PATH = Path(__file__).resolve().with_name('settings.json')
@@ -22,8 +25,10 @@ def settings_from_values(values, buttons):
         value = values[name].get()
         try:
             data[name] = value if kind is bool else kind(value)
+            if name in PERCENT_FIELDS and math.isfinite(data[name]):
+                data[name] = float(Decimal(str(value)) / 100)
         except (ValueError, TypeError):
-            raise ValueError(f'{name}: enter a valid {"whole number" if kind is int else "number"}.') from None
+            raise SettingsError(f'Enter a valid {"whole number" if kind is int else "number"}.', name) from None
     data['buttons'] = buttons
     return Settings.from_dict(data)
 
@@ -44,7 +49,7 @@ class App:
         self.last_tick = time.monotonic()
         self.last_ui = 0
         self.root.title('Joystick Followspot · grandMA3')
-        self.root.geometry('860x720')
+        self.root.geometry('860x740')
         self.root.minsize(760, 660)
         self.root.protocol('WM_DELETE_WINDOW', self.close)
         try:
@@ -60,8 +65,10 @@ class App:
         for name, kind in setting_types().items():
             if name != 'buttons':
                 variable = tk.BooleanVar if kind is bool else tk.StringVar
-                self.values[name] = variable(value=getattr(self.settings, name))
-        self.status = tk.StringVar(value='Output is stopped. Configure the MArker and movement space before starting.')
+                self.values[name] = variable(value=display_value(name, getattr(self.settings, name)))
+        self.status = tk.StringVar(value='Output stopped. Review Setup before starting.')
+        self.faults = {}
+        self.fault_label = tk.StringVar()
         self.output_label = tk.StringVar(value='OUTPUT STOPPED')
         self.device_label = tk.StringVar(value='No joystick connected')
         self.position_label = tk.StringVar()
@@ -75,165 +82,23 @@ class App:
             self.refresh_devices()
         except (OSError, RuntimeError) as exc:
             self.status.set(str(exc))
+            self.record_fault('input', str(exc))
         self.update_position()
         self.root.after(33, self.poll)
 
     def build_window(self):
-        ttk = self.ttk
-        outer = ttk.Frame(self.root, padding=16)
-        outer.pack(fill='both', expand=True)
-        ttk.Label(outer, text='Joystick Followspot', font=('Helvetica', 20, 'bold')).pack(anchor='w')
-        ttk.Label(outer, text='Stick → X/Y speed    Slider → brightness    Optional axis → zoom / iris    Buttons → commands / output').pack(anchor='w', pady=(4, 12))
-        notebook = ttk.Notebook(outer)
-        notebook.pack(fill='both', expand=True)
-        self.notebook = notebook
-        live = ttk.Frame(notebook, padding=16)
-        controls = ttk.Frame(notebook, padding=16)
-        target = ttk.Frame(notebook, padding=16)
-        network = ttk.Frame(notebook, padding=16)
-        zoom = ttk.Frame(notebook, padding=16)
-        mappings = ttk.Frame(notebook, padding=16)
-        test = ttk.Frame(notebook, padding=16)
-        for tab, name in [(live, 'Live'), (controls, 'Controls'), (target, 'Target / stage'),
-                          (zoom, 'Zoom / iris'), (network, 'OSC'), (mappings, 'Buttons'), (test, 'Test')]:
-            notebook.add(tab, text=name)
-        self.setting_tabs = [controls, target, zoom, network, mappings, test]
-        for variable, font in [(self.output_label, ('Helvetica', 17, 'bold')),
-                               (self.device_label, None), (self.position_label, ('Menlo', 16)),
-                               (self.brightness_label, ('Helvetica', 15)), (self.zoom_label, ('Helvetica', 15)),
-                               (self.axes_label, ('Menlo', 11)),
-                               (self.buttons_label, ('Menlo', 11))]:
-            options = {'textvariable': variable, 'wraplength': 770}
-            if font:
-                options['font'] = font
-            ttk.Label(live, **options).pack(anchor='w', pady=9)
-        ttk.Label(live, text='Position and zoom/iris show tracked values, not feedback from onPC.\nStart sends these values and the current brightness slider level.',
-                  wraplength=760).pack(anchor='w', pady=15)
-        bar = ttk.Frame(live)
-        bar.pack(anchor='w', pady=8)
-        self.start_button = ttk.Button(bar, text='Start output', command=self.start_output)
-        self.start_button.pack(side='left', padx=(0, 10))
-        self.test_button = ttk.Button(bar, text='Start test (figure 8)', command=lambda: self.start_output(test=True))
-        self.test_button.pack(side='left', padx=(0, 10))
-        ttk.Button(bar, text='Stop output', command=self.stop_output).pack(side='left', padx=(0, 10))
-        self.reset_button = ttk.Button(bar, text='Reset target + zoom/iris', command=self.reset_target)
-        self.reset_button.pack(side='left')
-        ttk.Checkbutton(live, text='Lock reset while running', variable=self.values['reset_locked'],
-                        command=self.set_reset_lock).pack(anchor='w', pady=4)
-        ttk.Label(live, text='Unlocked Reset sends the initial target and zoom/iris level; brightness is retained.',
-                  wraplength=740).pack(anchor='w', pady=4)
-        device_bar = ttk.Frame(controls)
-        device_bar.grid(row=0, column=0, columnspan=4, sticky='ew', pady=(0, 10))
-        ttk.Label(device_bar, text='Joystick').pack(side='left')
-        self.device_box = ttk.Combobox(device_bar, state='readonly', width=40)
-        self.device_box.pack(side='left', padx=8)
-        self.device_box.bind('<<ComboboxSelected>>', self.select_device)
-        ttk.Button(device_bar, text='Refresh', command=self.refresh_devices).pack(side='left')
-        row = 1
-        for label, axis, invert in [('Left / right', 'axis_x', 'invert_x'),
-                                    ('Upstage / downstage', 'axis_y', 'invert_y'),
-                                    ('Brightness slider', 'axis_slider', 'invert_slider')]:
-            self.entry(controls, row, label + ' axis', axis, width=8)
-            ttk.Button(controls, text='Learn', command=lambda key=axis: self.begin_learn(key)).grid(row=row, column=2, padx=8)
-            ttk.Checkbutton(controls, text='Invert', variable=self.values[invert]).grid(row=row, column=3, sticky='w')
-            row += 1
-        for key, label in [('max_speed', 'Maximum speed (m/s)'), ('dead_zone', 'Centre dead zone (0–0.89)'),
-                           ('centre_x', 'X centre'), ('centre_y', 'Y centre')]:
-            self.entry(controls, row, label, key)
-            row += 1
-        ttk.Button(controls, text='Calibrate centre (release the stick first)', command=self.calibrate).grid(row=row, column=0, columnspan=4, sticky='w', pady=8)
-        ttk.Label(controls, text='Learn: click Learn, then move only that control. Axis/button numbers start at 0.\nChanges take effect when you save/apply settings or Start output.',
-                  wraplength=740).grid(row=row+1, column=0, columnspan=4, sticky='w', pady=10)
-        ttk.Checkbutton(zoom, text='Enable zoom / iris axis', variable=self.values['zoom_enabled']).grid(row=0, column=0, columnspan=4, sticky='w', pady=(0, 10))
-        self.entry(zoom, 1, 'Zoom / iris axis', 'axis_zoom', width=8)
-        ttk.Button(zoom, text='Learn', command=lambda: self.begin_learn('axis_zoom')).grid(row=1, column=2, padx=8)
-        ttk.Checkbutton(zoom, text='Invert', variable=self.values['invert_zoom']).grid(row=1, column=3, sticky='w')
-        for row, (key, label) in enumerate([
-                ('zoom_speed', 'Maximum speed (percentage points/s)'),
-                ('zoom_dead_zone', 'Centre dead zone (0–0.89)'), ('centre_zoom', 'Axis centre'),
-                ('initial_zoom', 'Initial / reset level (0–100%)'),
-                ('zoom_executor_page', 'Executor page'), ('zoom_executor_number', 'Executor number')], 2):
-            self.entry(zoom, row, label, key)
-        ttk.Button(zoom, text='Calibrate zoom / iris centre (release control first)',
-                   command=self.calibrate_zoom).grid(row=8, column=0, columnspan=4, sticky='w', pady=8)
-        ttk.Label(zoom, text='Centre holds the tracked level; deflection changes it faster as you move farther.\nIn onPC, configure a separate zoom-only or iris-only sequence with a Temp fader.\nUse FaderRange 100. The script sends fader levels, not fixture attributes.',
-                  wraplength=740).grid(row=9, column=0, columnspan=4, sticky='w', pady=10)
-        self.entry(target, 0, 'MArker CID', 'marker_id')
-        self.entry(target, 1, 'Z height (m)', 'z')
-        ttk.Label(target, text='Operating limits (m) — smaller than or equal to the movement space').grid(row=2, column=0, columnspan=6, sticky='w', pady=10)
-        for column, (key, label) in enumerate([('x_min', 'X min'), ('x_max', 'X max'), ('y_min', 'Y min'), ('y_max', 'Y max')]):
-            ttk.Label(target, text=label).grid(row=3, column=column, sticky='w')
-            ttk.Entry(target, textvariable=self.values[key], width=10).grid(row=4, column=column, sticky='w', padx=(0, 12))
-        ttk.Label(target, text='Initial target (m) — used by Reset and on script launch').grid(row=5, column=0, columnspan=6, sticky='w', pady=10)
-        for column, (key, label) in enumerate([('initial_x', 'X'), ('initial_y', 'Y')]):
-            ttk.Label(target, text=label).grid(row=6, column=column*2, sticky='w')
-            ttk.Entry(target, textvariable=self.values[key], width=10).grid(row=6, column=column*2+1, sticky='w')
-        ttk.Label(target, text='MArker movement space (m) — must match onPC, including its centre/offset').grid(row=7, column=0, columnspan=6, sticky='w', pady=10)
-        for row, axis in enumerate(('x', 'y', 'z'), 8):
-            ttk.Label(target, text=axis.upper()).grid(row=row, column=0, sticky='w', pady=4)
-            ttk.Entry(target, textvariable=self.values[f'space_{axis}_min'], width=10).grid(row=row, column=1, sticky='w')
-            ttk.Label(target, text='to').grid(row=row, column=2)
-            ttk.Entry(target, textvariable=self.values[f'space_{axis}_max'], width=10).grid(row=row, column=3, sticky='w')
-        ttk.Label(target, text='Default space bounds assume a 200 m cube centred at the origin.\nConfirm the actual space in onPC before enabling output.', wraplength=740).grid(row=11, column=0, columnspan=6, sticky='w', pady=10)
-        for row, (key, label) in enumerate([('host', 'onPC host / IP'), ('port', 'OSC port'), ('prefix', 'OSC prefix (no slashes)'),
-                                            ('executor_page', 'Brightness executor page'), ('executor_number', 'Brightness executor number'),
-                                            ('attribute_x', 'MArker X attribute'), ('attribute_y', 'MArker Y attribute'), ('attribute_z', 'MArker Z attribute')]):
-            self.entry(network, row, label, key, width=26)
-        ttk.Label(network, text='In onPC: enable OSC Input, Receive and Receive Command.\nUse UDP and the same port/prefix. Set FaderRange to 100.\nIf loopback is unavailable, enter the IP selected in onPC’s OSC Interface.',
-                  wraplength=740).grid(row=8, column=0, columnspan=3, sticky='w', pady=15)
-        for row, (key, label) in enumerate([('test_size', 'Figure 8 half-width (m)'), ('test_period', 'Seconds per lap'),
-                                            ('test_brightness', 'Test brightness (0–100 %)')]):
-            self.entry(test, row, label, key)
-        ttk.Label(test, text='Test mode needs no joystick. The marker traces a figure 8 around the initial target (Target / stage tab), '
-                             'stays inside the operating limits, and the executor fader is held at the test brightness. '
-                             'Click Start test on the Live tab; Stop output ends it.',
-                  wraplength=740).grid(row=3, column=0, columnspan=3, sticky='w', pady=15)
-        self.button_table = ttk.Treeview(mappings, columns=('action', 'press', 'release'), height=6)
-        self.button_table.heading('#0', text='Button')
-        self.button_table.column('#0', width=65, stretch=False)
-        self.button_table.heading('action', text='Action (on press)')
-        self.button_table.column('action', width=135, stretch=False)
-        for key in ('press', 'release'):
-            self.button_table.heading(key, text=key.capitalize() + ' command')
-            self.button_table.column(key, width=240)
-        self.button_table.pack(fill='x')
-        self.button_table.bind('<<TreeviewSelect>>', self.load_button)
-        self.button_id = self.tk.StringVar(value='0')
-        self.button_action = self.tk.StringVar(value=BUTTON_ACTIONS['command'])
-        self.press_command = self.tk.StringVar()
-        self.release_command = self.tk.StringVar()
-        line = ttk.Frame(mappings)
-        line.pack(fill='x', pady=4)
-        ttk.Label(line, text='Action on press', width=17).pack(side='left')
-        action_box = ttk.Combobox(line, textvariable=self.button_action,
-                                 values=list(BUTTON_ACTIONS.values()), state='readonly')
-        action_box.pack(side='left', fill='x', expand=True)
-        action_box.bind('<<ComboboxSelected>>', self.update_button_editor)
-        for label, var in [('Button number', self.button_id), ('Press command', self.press_command), ('Release command', self.release_command)]:
-            line = ttk.Frame(mappings)
-            line.pack(fill='x', pady=4)
-            ttk.Label(line, text=label, width=17).pack(side='left')
-            entry = ttk.Entry(line, textvariable=var)
-            entry.pack(side='left', fill='x', expand=True)
-            if var is self.press_command:
-                self.press_entry = entry
-            elif var is self.release_command:
-                self.release_entry = entry
-        line = ttk.Frame(mappings)
-        line.pack(anchor='w', pady=8)
-        ttk.Button(line, text='Learn button', command=lambda: self.begin_learn('button')).pack(side='left', padx=(0, 8))
-        ttk.Button(line, text='Set mapping', command=self.set_button).pack(side='left', padx=(0, 8))
-        ttk.Button(line, text='Remove mapping', command=self.remove_button).pack(side='left')
-        ttk.Label(mappings, text='MA commands: Go+ Sequence 10; Go+ Macro 5. Held actions use press/release commands.\nLocal actions fire once per press, including Start while stopped. Reset obeys the Live lock.\nClick Set mapping, then Save / apply settings.',
-                  wraplength=740).pack(anchor='w', pady=8)
-        self.render_buttons()
-        self.save_button = ttk.Button(outer, text='Save / apply settings', command=self.apply_settings)
-        self.save_button.pack(anchor='w', pady=(12, 6))
-        ttk.Label(outer, textvariable=self.status, wraplength=810).pack(fill='x', anchor='w')
+        self.view = FollowspotView(self)
 
-    def entry(self, parent, row, label, key, width=16):
-        self.ttk.Label(parent, text=label).grid(row=row, column=0, sticky='w', pady=5, padx=(0, 14))
-        self.ttk.Entry(parent, textvariable=self.values[key], width=width).grid(row=row, column=1, sticky='w', pady=5)
+    def draft_settings(self):
+        return settings_from_values(self.values, self.draft_buttons)
+
+    def record_fault(self, kind, message):
+        self.faults[kind] = message
+        self.fault_label.set('\n'.join(self.faults.values()))
+
+    def clear_fault(self, kind):
+        self.faults.pop(kind, None)
+        self.fault_label.set('\n'.join(self.faults.values()))
 
     def require_stopped(self):
         if self.controller.active:
@@ -268,6 +133,9 @@ class App:
                 self.status.set('Output stopped. Choose a joystick explicitly; no automatic device substitution.')
         except (OSError, RuntimeError, ValueError) as exc:
             self.status.set(str(exc))
+            self.record_fault('input', str(exc))
+        finally:
+            self.view.refresh()
 
     def select_device(self, event=None):
         if not self.require_stopped():
@@ -282,12 +150,16 @@ class App:
             self.read_snapshot()
             self.values['device_name'].set(name)
             self.device_label.set(f'{name} · {len(self.axes)} axes · {len(self.buttons)} buttons')
+            self.clear_fault('input')
             self.status.set('Joystick connected. Learn the axes and calibrate the released stick before Start.')
         except (OSError, RuntimeError, ValueError) as exc:
             self.joystick.close()
             self.axes, self.buttons = [], []
             self.device_label.set('Joystick unavailable')
             self.status.set(str(exc))
+            self.record_fault('input', str(exc))
+        finally:
+            self.view.refresh()
 
     def read_snapshot(self):
         """Read outside polling; buttons already held stay unobserved until pressed again."""
@@ -295,17 +167,20 @@ class App:
         self.button_edges.seed(self.buttons)
 
     def input_lost(self, reason):
-        self.stop_output(reason)
+        self.stop_output(reason, fault_kind='input')
         self.joystick.close()
         self.axes, self.buttons = [], []
         self.device_label.set('Joystick disconnected / unavailable · Refresh to reconnect')
+        self.record_fault('input', f'Joystick unavailable — output stopped. {reason}\nReconnect it, then Refresh in Setup → Joystick.')
 
     def begin_learn(self, key):
         if not self.require_stopped() or not self.axes:
             self.status.set('Connect a joystick and stop output before learning a control.')
             return
         self.learning = (key, list(self.axes), list(self.buttons), time.monotonic() + 8)
-        self.status.set('Press the desired button.' if key == 'button' else 'Move only the control you want to assign; learning times out after 8 seconds.')
+        text = 'Press the desired button…' if key == 'button' else f'Move only the {AXIS_NAMES[key]}…'
+        self.view.set_feedback(key, text + ' (8 seconds)')
+        self.status.set(text)
 
     def calibrate(self):
         if not self.require_stopped() or not self.axes:
@@ -318,9 +193,13 @@ class App:
                 raise ValueError('Release the stick and choose its X/Y axes before calibrating.')
             self.values['centre_x'].set(f'{self.axes[x]:.6f}')
             self.values['centre_y'].set(f'{self.axes[y]:.6f}')
-            self.status.set('Centre captured. Save / apply settings to use it.')
+            text = 'Centre captured. Save settings to use it.'
+            self.view.set_feedback('axis_x', f'Centre {self.axes[x]:+.3f} captured · save settings')
+            self.view.set_feedback('axis_y', f'Centre {self.axes[y]:+.3f} captured · save settings')
+            self.status.set(text)
         except (ValueError, IndexError) as exc:
             self.status.set(str(exc))
+            self.view.set_feedback('axis_x', str(exc))
 
     def calibrate_zoom(self):
         if not self.require_stopped() or not self.axes:
@@ -333,22 +212,29 @@ class App:
             if not -0.9 <= centre <= 0.9:
                 raise ValueError('Release the zoom/iris control before calibrating.')
             self.values['centre_zoom'].set(f'{centre:.6f}')
-            self.status.set('Zoom/iris centre captured. Save / apply settings to use it.')
+            self.view.set_feedback('axis_zoom', f'Centre {centre:+.3f} captured · save settings')
+            self.status.set('Zoom/iris centre captured. Save settings to use it.')
         except (ValueError, IndexError) as exc:
             self.status.set(str(exc))
+            self.view.set_feedback('axis_zoom', str(exc))
 
     def apply_settings(self):
         if not self.require_stopped():
             return False
         try:
+            if self.view.mapping_pending():
+                raise SettingsError('Add / update the button mapping or discard editor changes before saving.', 'buttons')
             settings = settings_from_values(self.values, self.draft_buttons)
             settings.save(self.settings_path)
         except (OSError, ValueError) as exc:
-            self.messagebox.showerror('Settings', str(exc))
+            self.view.show_error(exc)
+            self.record_fault('settings', f'Settings were not saved: {exc}')
             return False
         xyz = self.controller.motion.xyz
         zoom_level = self.controller.motion.zoom_level
         self.settings = settings
+        self.view.clear_errors()
+        self.clear_fault('settings')
         self.controller = Controller(settings, self.send)
         self.controller.motion.xyz = [clamp(xyz[0], settings.x_min, settings.x_max),
                                       clamp(xyz[1], settings.y_min, settings.y_max), settings.z]
@@ -361,6 +247,7 @@ class App:
                 self.read_snapshot()
             except (OSError, RuntimeError, ValueError) as exc:
                 self.input_lost(f'Settings saved and applied, but the joystick could not be read: {exc}')
+        self.view.refresh()
         return True
 
     def start_output(self, test=False):
@@ -374,7 +261,7 @@ class App:
         try:
             if not test:
                 if not (self.joystick and self.joystick.handle):
-                    raise ConnectionError('Select a joystick in Controls first; click Refresh after reconnecting it.')
+                    raise ConnectionError('Select a joystick in Setup → Joystick first; click Refresh after reconnecting it.')
                 # Suppress held buttons even if validation or the first send fails.
                 self.read_snapshot()
                 self.controller.motion.check_axes(self.axes)
@@ -387,7 +274,8 @@ class App:
             self.sender = OscSender(s.host, s.port, s.prefix)
             self.controller.start(self.axes, test=test)
             self.last_tick = time.monotonic()
-            self.output_label.set(('TEST RUNNING (figure 8)' if test else 'OUTPUT RUNNING') + ' · OSC sent, reception unconfirmed')
+            self.clear_fault('output')
+            self.output_label.set('TEST RUNNING (figure 8)' if test else 'OUTPUT RUNNING')
             self.lock_settings(True)
             self.status.set('Test running: the marker traces a figure 8; the joystick is ignored. Stop ends it.' if test else
                             'Output running. Centre holds position and zoom/iris. Stop retains tracked levels.')
@@ -400,7 +288,7 @@ class App:
             raise OSError('OSC output is not connected.')
         self.sender.send(address, value)
 
-    def stop_output(self, reason='Output stopped. Position, brightness and zoom/iris are retained.'):
+    def stop_output(self, reason=None, fault_kind='output'):
         if self.controller.test:
             # The joystick is not read during a test; do not act on stale button state.
             self.button_edges = ButtonEdges()
@@ -411,14 +299,17 @@ class App:
         self.learning = None
         self.output_label.set('OUTPUT STOPPED')
         self.lock_settings(False)
-        self.status.set(reason + (' Release send failed: ' + '; '.join(errors) if errors else ''))
+        message = reason if reason is not None else 'Output stopped. Position, brightness and zoom/iris are retained.'
+        self.status.set(message + (' Release send failed: ' + '; '.join(errors) if errors else ''))
+        if reason is not None:
+            self.record_fault(fault_kind, f'Output stopped: {reason}')
+            if 'Release send failed:' in reason:
+                self.record_fault('release', reason + ' Check and release held actions in onPC; acknowledge in Diagnostics.')
+        if errors:
+            self.record_fault('release', 'Release send failed: ' + '; '.join(errors) + '. Check and release held actions in onPC; acknowledge in Diagnostics.')
 
     def lock_settings(self, locked):
-        for tab in self.setting_tabs:
-            self.notebook.tab(tab, state='disabled' if locked else 'normal')
-        for button in (self.start_button, self.test_button, self.save_button):
-            button.configure(state='disabled' if locked else 'normal')
-        self.reset_button.configure(state='disabled' if locked and self.settings.reset_locked else 'normal')
+        self.view.set_running(locked)
         if locked:
             self.notebook.select(0)
 
@@ -428,11 +319,13 @@ class App:
             # Save only the lock; other editor values remain unapplied drafts.
             settings.save(self.settings_path)
             self.settings.reset_locked = settings.reset_locked
+            self.clear_fault('lock')
             self.status.set('Reset is locked while running.' if settings.reset_locked else
                             'Reset is unlocked: it can send the initial target and zoom/iris level while running.')
         except (OSError, ValueError) as exc:
             self.values['reset_locked'].set(self.settings.reset_locked)
             self.messagebox.showerror('Could not save reset lock', str(exc))
+            self.record_fault('lock', f'Reset lock was not saved: {exc}')
         self.lock_settings(self.controller.active)
 
     def reset_target(self, apply_drafts=True):
@@ -454,9 +347,10 @@ class App:
 
     def update_position(self):
         x, y, z = self.controller.motion.xyz
-        self.position_label.set(f'Target  X {x:+.3f} m   Y {y:+.3f} m   Z {z:.3f} m')
+        self.position_label.set(f'X {x:+.3f} m   Y {y:+.3f} m   Z {z:.3f} m')
         self.zoom_label.set(f'Zoom / iris  {self.controller.motion.zoom_level:.1f}%' if self.settings.zoom_enabled else
                             'Zoom / iris  disabled')
+        self.view.refresh()
 
     def process_input(self, dt, allow_actions=True):
         if allow_actions:
@@ -509,10 +403,13 @@ class App:
                     if learned is not None:
                         (self.button_id if key == 'button' else self.values[key]).set(str(learned))
                         self.learning = None
-                        self.status.set(f'Learned {key}: {learned}. Save / apply settings after completing mappings.')
+                        text = f'Assigned {"button" if key == "button" else "axis"} {learned} · save settings'
+                        self.view.set_feedback(key, text)
+                        self.status.set(text)
                     elif now >= deadline:
                         self.learning = None
                         self.status.set('Learning timed out; no mapping changed.')
+                        self.view.set_feedback(key, 'Learning timed out · click Learn to try again')
                 try:
                     self.process_input(dt, allow_actions=not learning_sample)
                 except Exception as exc:
@@ -533,6 +430,7 @@ class App:
                         self.brightness_label.set('Brightness — choose valid axis mappings')
                     self.update_position()
         finally:
+            self.view.refresh()
             self.root.after(33, self.poll)
 
     def render_buttons(self):
@@ -544,6 +442,10 @@ class App:
                                              mapping.get('press', ''), mapping.get('release', '')))
 
     def load_button(self, event=None):
+        if self.view.mapping_pending():
+            self.view.restore_selection()
+            self.view.show_error(SettingsError('Add / update the current mapping or discard editor changes before selecting another.', 'buttons'))
+            return
         selection = self.button_table.selection()
         if selection:
             key = selection[0]
@@ -553,9 +455,10 @@ class App:
             self.press_command.set(mapping.get('press', ''))
             self.release_command.set(mapping.get('release', ''))
             self.update_button_editor()
+            self.view.editor_loaded()
 
     def update_button_editor(self, event=None):
-        state = 'normal' if self.button_action.get() == BUTTON_ACTIONS['command'] else 'disabled'
+        state = 'normal' if not self.controller.active and self.button_action.get() == BUTTON_ACTIONS['command'] else 'disabled'
         self.press_entry.configure(state=state)
         self.release_entry.configure(state=state)
 
@@ -572,19 +475,22 @@ class App:
             Settings.from_dict(dict(self.settings.to_dict(), buttons=draft))
             self.draft_buttons = draft
             self.render_buttons()
-            self.status.set('Button mapping updated. Save / apply settings to persist it.')
+            self.view.editor_loaded()
+            self.status.set('Mapping added / updated in the draft. Save settings to persist it.')
         except ValueError as exc:
-            self.messagebox.showerror('Button mapping', str(exc))
+            self.view.show_error(exc)
+            self.record_fault('settings', f'Button mapping was not updated: {exc}')
 
     def remove_button(self):
         if self.require_stopped():
             self.draft_buttons.pop(self.button_id.get().strip(), None)
             self.render_buttons()
-            self.status.set('Mapping removed. Save / apply settings to persist the change.')
+            self.view.editor_loaded()
+            self.status.set('Mapping removed from the draft. Save settings to persist the change.')
 
     def close(self):
         if self.controller:
-            self.stop_output('Window closed; output stopped.')
+            self.stop_output()
         if self.joystick:
             self.joystick.shutdown()
         self.root.destroy()
