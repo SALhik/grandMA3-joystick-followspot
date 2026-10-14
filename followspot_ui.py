@@ -439,7 +439,8 @@ class FollowspotView:
         app.save_button.configure(state='disabled' if active else 'normal')
         app.reset_button.configure(state='disabled' if active and s.reset_locked else 'normal')
         if s.position_output == 'psn' or app.streamer is not None:
-            app.release_button.pack(side='left', padx=(16, 0))
+            if not app.release_button.winfo_manager():
+                app.release_button.pack(side='left', padx=(16, 0))
         else:
             app.release_button.pack_forget()
         app.release_button.configure(state='normal' if app.streamer is not None else 'disabled')

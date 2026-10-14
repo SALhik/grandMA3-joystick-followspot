@@ -1,4 +1,5 @@
 """PSN encoder and streamer tests; no network access is needed."""
+import socket
 import struct
 import threading
 import time
@@ -6,7 +7,7 @@ import unittest
 
 import followspot_core as core
 
-# Pinned from the encoder verified against the PSN-CPP reference decoder:
+# Pinned bytes; tools/psn_test_sender.py (verified in onPC) produces identical bytes for these inputs:
 # tracker 300, position (1.0, -2.0, 3.5), timestamp 0x0102030405060708, frame 5.
 DATA_BYTES = bytes.fromhex(
     '5567288000000c00080706050403020102000501010014802c01108000000c000000803f000000c000006040')
@@ -152,4 +153,8 @@ class PsnStreamerTests(unittest.TestCase):
             s = core.PsnStreamer(settings, (0, 0, 0), start=False)
         except PermissionError:
             self.skipTest('sandbox denies UDP sockets')
-        s.close()
+        try:
+            self.assertEqual(s.socket.getsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, 4), socket.inet_aton('127.0.0.1'))
+            self.assertEqual(s.socket.getsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL), 1)
+        finally:
+            s.close()

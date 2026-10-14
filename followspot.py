@@ -53,6 +53,9 @@ class App:
         self.root.geometry('860x740')
         self.root.minsize(760, 660)
         self.root.protocol('WM_DELETE_WINDOW', self.close)
+        if root.tk.call('tk', 'windowingsystem') == 'aqua':
+            # Cmd-Q and the app menu's Quit otherwise bypass the close confirmation.
+            root.createcommand('::tk::mac::Quit', self.close)
         try:
             self.settings = Settings.load(self.settings_path)
         except (ValueError, OSError) as exc:
@@ -334,7 +337,7 @@ class App:
         error = self.streamer.poll_error()
         if error is None:
             return
-        reason = f'PSN stream failed: {error}. The marker returns to 0, 0, 0 in onPC.'
+        reason = f'PSN stream failed: {error}. The marker returns to 0, 0, 0 in onPC. Check the PSN interface; see docs/PSN.md.'
         self.close_streamer()
         if self.controller.active:
             self.stop_output(reason, fault_kind='psn')

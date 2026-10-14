@@ -717,6 +717,26 @@ class PsnWindowTests(unittest.TestCase):
         app.start_output()
         self.assertNotIn('network down', app.fault_label.get())
 
+    def test_first_packet_is_the_displayed_post_clamp_target(self):
+        app, _ = self.app(position_output='psn')
+        app.controller.motion.xyz = [50.0, -2.0, 99.0]
+        app.start_output()
+        self.assertEqual(self.streamers[0].positions[0], (10.0, -2.0, 1.5))
+        self.assertEqual(self.streamers[0].positions[0], tuple(app.controller.motion.xyz))
+
+    def test_restart_with_a_held_stream_resumes_at_the_held_position(self):
+        app, _ = self.app(position_output='psn')
+        app.start_output()
+        app.controller.tick([1.0, 0, 0], 0.1)
+        app.stop_output()
+        held = self.streamers[0].position
+        self.assertNotEqual(held, (0.0, 0.0, 1.5))
+        sent = len(self.streamers[0].positions)
+        app.start_output()
+        self.assertEqual(len(self.streamers), 1)
+        self.assertEqual(self.streamers[0].positions[sent], held)
+        self.assertEqual(self.streamers[0].position, held)
+
     def test_close_asks_before_dropping_a_held_stream(self):
         app, _ = self.app(position_output='psn')
         destroyed = []
@@ -778,6 +798,13 @@ class RealWindowTests(unittest.TestCase):
         app = followspot.App(root, path)
         self.addCleanup(app.close)
         return app
+
+    def test_macos_quit_command_is_routed_to_the_close_handler(self):
+        # Only checks the command is defined; no Quit event is triggered.
+        app = self.open_app()
+        if app.root.tk.call('tk', 'windowingsystem') != 'aqua':
+            self.skipTest('::tk::mac::Quit exists only on macOS Tk')
+        self.assertTrue(app.root.tk.call('info', 'commands', '::tk::mac::Quit'))
 
     def test_visible_window_with_real_backend_starts_and_polls_without_aborting(self):
         # A child process is necessary: a native Tk/SDL abort kills the interpreter.
