@@ -288,7 +288,8 @@ class App:
             self.status.set('Test running: the marker traces a figure 8; the joystick is ignored. Stop ends it.' if test else
                             'Output running. Centre holds position and zoom/iris. Stop retains tracked levels.')
         except (OSError, RuntimeError, ValueError) as exc:
-            if created_stream: self.close_streamer()
+            if created_stream:
+                self.close_streamer()
             self.stop_output(str(exc))
             self.messagebox.showerror('Could not start output', str(exc))
 
@@ -310,9 +311,9 @@ class App:
         return True
 
     def close_streamer(self):
-        if self.streamer is not None:
-            self.streamer.close()
-            self.streamer = None
+        streamer, self.streamer = self.streamer, None
+        if streamer is not None:
+            streamer.close()
 
     def release_marker(self):
         if self.streamer is None:
@@ -420,12 +421,11 @@ class App:
         # Stop and Release marker both act; Start and Reset are then ignored this sample.
         # Otherwise Start wins over Reset when stopped and is ignored when active.
         stopping = 'stop' in actions or ('toggle' in actions and self.controller.active)
-        releasing = 'release_marker' in actions
         if stopping:
             self.stop_output()
-        if releasing:
-            self.release_marker()
-        if stopping or releasing:
+        # A Release marker press with no stream open does nothing, so the sample continues.
+        released = 'release_marker' in actions and self.release_marker()
+        if stopping or released:
             return
         if not self.controller.active and ('start' in actions or 'toggle' in actions):
             self.start_output()

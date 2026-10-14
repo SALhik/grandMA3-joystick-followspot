@@ -643,6 +643,39 @@ class PsnWindowTests(unittest.TestCase):
         self.assertFalse(app.controller.active)
         self.assertIsNone(app.streamer)
 
+    def test_osc_failure_stops_output_but_holds_the_stream(self):
+        app, _ = self.app(position_output='psn')
+        app.start_output()
+        self.sender.fail = True
+        app.axes[2] = 1.0
+        app.poll()
+        self.assertFalse(app.controller.active)
+        self.assertIs(app.streamer, self.streamers[0])
+        self.assertFalse(self.streamers[0].closed)
+
+    def test_release_marker_button_without_a_stream_does_not_skip_the_sample(self):
+        app, messages = self.app(buttons={'0': {'action': 'release_marker'}, '1': {'press': 'Down', 'release': 'Up'}})
+        app.start_output()
+        app.buttons = [False, True, False]
+        app.process_input(0.033)
+        self.assertEqual(messages[-1], ('/cmd', 'Down'))
+        app.buttons = [True, False, False]
+        app.process_input(0.033)
+        self.assertTrue(app.controller.active)
+        self.assertEqual(messages[-1], ('/cmd', 'Up'))
+        self.assertNotIn('stopped', app.status.get().lower())
+
+    def test_close_streamer_forgets_the_stream_even_if_close_raises(self):
+        app, _ = self.app(position_output='psn')
+        app.start_output()
+        app.stop_output()
+        def broken():
+            raise OSError('close failed')
+        self.streamers[0].close = broken
+        with self.assertRaises(OSError):
+            app.close_streamer()
+        self.assertIsNone(app.streamer)
+
     def test_close_asks_before_dropping_a_held_stream(self):
         app, _ = self.app(position_output='psn')
         destroyed = []
