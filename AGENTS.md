@@ -102,13 +102,15 @@ failures; never report skipped or blocked hardware checks as passing.
   on OSC with the existing rules. Lifecycle: Start opens the stream (a failed Start
   closes only a stream it created); Stop, joystick read failure and OSC failure
   stop output but hold the stream; the stream closes only on Release marker, a
-  confirmed window close, or a stream error. Release marker (Live button or local
+  confirmed window close (on macOS also Cmd-Q, routed through `::tk::mac::Quit`; the command's
+  existence is tested but a real Quit event is not), or a stream error. Release marker (Live button or local
   button action `release_marker`) stops output if running and closes the stream;
   in the same sample it acts with Stop and beats Start and Reset, and is a no-op
   with no stream open. `App.check_streamer` runs first in every poll, so a held
   stream's send error is surfaced even with no joystick open: it closes the
   stream, stops output if running and records fault kind `psn`, which persists
-  until the next Start or Release marker. PSN fields stay editable while a stream
+  until the next successful Start (the stream is already closed, so Release marker
+  cannot clear it). PSN fields stay editable while a stream
   is held and output is stopped, but `apply_settings` refuses a changed PSN field
   until Release. Validation does not change with the mode (`marker_id` and the
   Movement Space still apply even though PSN does not use them for conversion).
@@ -147,8 +149,8 @@ failures; never report skipped or blocked hardware checks as passing.
 - Coordinates are in metres in the script. Convert to percent using the actual
   MArker **Movement Space** bounds, which differ from operating limits and the
   MArker **Target Space**. Defaults are examples, not measured stage geometry.
-- MA receives a single OSC message, not an OSC bundle. Movement uses `/cmd`
-  with an OSC string containing semicolon-separated commands. Clear only the
+- MA receives a single OSC message, not an OSC bundle. OSC position output uses
+  `/cmd` (PSN mode streams the position instead) with an OSC string containing semicolon-separated commands. Clear only the
   selection, select the configured MArker, then set its attributes:
 
   ```text
@@ -229,7 +231,9 @@ launcher on real hardware remain unverified.
 
 Automated coverage: core motion/configuration/OSC-packet tests, simulated SDL
 input/disconnect, native HID discovery and combined-list tests with doubles,
-headless window lifecycle tests (including zoom/iris and test mode), real Tk
+PSN encoder (pinned bytes), streamer (injected sockets; one real socket open, no packet is
+received by a real listener) and controller tests, headless window lifecycle tests (including
+zoom/iris, test mode and PSN stream hold/release/close, faults and button priority), real Tk
 workflow tests, and a visible startup test with the real backend. Tk tests skip
 when Tk is missing or cannot open a window. The
 Windows launcher has no automated coverage. MA's installed 2.5 system tests

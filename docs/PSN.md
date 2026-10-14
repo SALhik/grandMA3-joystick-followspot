@@ -50,9 +50,11 @@ Check with `lsof -nP -iUDP:56565` that onPC listens. The System Monitor shows OS
 
 What changes in PSN mode: the app no longer sends `ClearSelection; MArker ...`, so your selection and encoders stay free. Brightness, zoom / iris and buttons still go over OSC, so the OSC setup in [GRANDMA3_SETUP.md](GRANDMA3_SETUP.md) is still needed. The MArker is chosen by the PSN row in onPC, so the app's MArker CID and movement space are not used for conversion in PSN mode, but they must still be valid settings.
 
-**Stop and Release marker.** PSN has no hold: if packets stop, onPC resets the MArker to 0, 0, 0. So **Stop keeps sending the last position** and the lights stay put; **Release marker** (Live button, or a button mapped to "Release PSN marker") ends the stream, and the MArker then resets to 0, 0, 0. Release marker also stops output if it is running. Closing the window asks before it does this. If the app crashes or the computer sleeps, the stream stops and the MArker resets. A joystick disconnect or an OSC failure stops output but keeps the stream holding.
+**Stop and Release marker.** PSN has no hold: if packets stop, onPC resets the MArker to 0, 0, 0. So **Stop keeps sending the last position** and the lights stay put; **Release marker** (Live button, or a button mapped to "Release PSN marker") ends the stream, and the MArker then resets to 0, 0, 0. Release marker also stops output if it is running. Closing the window (or Cmd-Q on macOS) asks for confirmation first when a stream is open, because closing ends the stream; Release marker does not ask. A joystick disconnect or an OSC failure stops output but keeps the stream holding.
 
-The PSN selector and fields can still be edited while a stream is held and output is stopped, but Save settings, Start and the stopped Reset button refuse to apply a changed PSN setting until you Release marker. While a stream is held and output is stopped, the Live position shows a second "Held at" line, because the displayed target (changed by Reset or edits) may differ from what onPC is holding; the next Start sends the displayed target. A stream failure (for example a socket error) is shown as a PSN fault and stays until the next Start or Release marker; the MArker then resets in onPC.
+**Warning:** quitting the app, closing the Terminal that launched it, a crash, or the computer sleeping all stop the stream, and the MArker then resets to 0, 0, 0 mid-show. Quitting and a crash end the stream because the process ends; closing the Terminal and sleep should do the same but were not tested.
+
+The PSN selector and fields can still be edited while a stream is held and output is stopped, but Save settings, Start and the stopped Reset button refuse to apply a changed PSN setting until you Release marker. While a stream is held and output is stopped, the Live position shows a second "Held at" line, because the displayed target (changed by Reset or edits) may differ from what onPC is holding; the next Start sends the displayed target. A stream failure (for example a socket error) closes the stream, stops output if it was running, and shows a PSN fault that stays until the next successful Start (Release marker cannot clear it, because the failed stream is already closed); the MArker resets in onPC.
 
 The Fixture Sheet and the MArker encoders do not show the PSN position (they read 0, 0, 0); use the 3D view or the PSN row.
 
@@ -73,7 +75,8 @@ Check with `lsof -nP -iUDP:56565` on the onPC computer and watch the tracker in 
 - **Tracker stays red:** check the PSN Interface in onPC against the app's PSN interface, that the tracker ID matches the app's PSN tracker ID, that the row's MArker ID is the MArker's CID, and that **Input** is enabled. Confirm the app is streaming (Start, or a held stream after Stop).
 - **The MArker moves, then jumps to 0, 0, 0:** the stream stopped. Release marker was pressed, the window was closed, the app stopped, or a PSN fault was shown in Diagnostics.
 - **Nothing moves although the tracker is not red:** check **Requested** on the tracker and that the universe's **Merge Mode** is **Prio**.
-- **A PSN fault reports "No route to host" or the stream fails right after Start:** the multicast route for the chosen interface is wrong; see the VPN note in the previous section. Start itself reports an error if the socket cannot be opened or the interface address is invalid.
+- **A PSN fault reports "No route to host" or the stream fails right after Start:** the multicast route for the chosen interface is wrong (the send happens on the stream thread, so this appears as a PSN fault just after Start, not as a Start error); see the VPN note in the previous section. Start itself reports an error only if the socket cannot be opened or the interface address is invalid.
+- **The Live "Held at" position changed after a failed Start:** Start sends the position before the OSC brightness send, so a Start that fails on OSC can move the held position. The stream stays open and "Held at" shows the current position; Release marker if that is not wanted.
 
 ## Test sender
 
@@ -92,7 +95,7 @@ PSN v2.03, UDP, little-endian chunks. A chunk header is a uint32: `id | (data_le
 - **DATA** packet `0x6755`: header chunk `0x0000` (uint64 timestamp in microseconds, version high 2, version low 0, frame id, frame packet count), then tracker list `0x0001` containing one chunk per tracker (chunk id = tracker id) with a POS chunk `0x0000` of three float32 values in metres.
 - **INFO** packet `0x6756`: header `0x0000`, system name `0x0001`, tracker list `0x0002` containing name chunks `0x0000`. The test sender repeats it at 1 Hz.
 
-The encoder was cross-checked by decoding its packets with the PSN-CPP reference library.
+The app's encoder produces the same bytes as the verified `tools/psn_test_sender.py` for the fixed inputs pinned in `tests/test_psn.py`. (The test sender's layout was cross-checked against the PSN-CPP reference decoder during the investigation; the app itself was not decoded with it.)
 
 ## Open risks
 

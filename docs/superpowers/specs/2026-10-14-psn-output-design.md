@@ -47,7 +47,7 @@ New fields, all with defaults so existing `settings.json` files load unchanged:
 
 ## Behavior
 
-- **Start (PSN mode):** applies settings, creates the streamer with the displayed target if none is open, starts the controller. A failed Start closes a streamer it created and leaves a pre-existing held stream alone.
+- **Start (PSN mode):** applies settings, creates the streamer with the displayed target if none is open, starts the controller. A failed Start closes a streamer it created. A pre-existing held stream stays open, but it may have moved: the controller sends the position before the OSC brightness send that can fail, so the Held-at display shows the current position.
 - **Running:** each controller output calls `streamer.set_position`. The streamer keeps sending at 30 Hz when the stick is idle (this reverses the OSC rule of no idle resend, per mode).
 - **Stop:** the controller stops as today (button releases attempted, brightness and zoom OSC stop). The streamer keeps sending the last position, so the lights stay put.
 - **Stopped Reset and settings edits:** these change the displayed target but not the held stream. While a stream is open, the stage preview and position label show the held position separately ("Held at X, Y, Z") so the display never claims a target onPC is not holding. The next Start sends the displayed target.
@@ -71,7 +71,7 @@ New fields, all with defaults so existing `settings.json` files load unchanged:
 ## Errors
 
 - A streamer send error is stored by the thread. `poll` checks `poll_error()` first, outside the test and joystick branches, so a held stream with no joystick open still surfaces it. It stops output if running, closes the streamer and records a fault.
-- Start fails with the error text if the socket cannot be opened or the interface is invalid. A multicast route failure ("No route to host") points the operator to the interface advice in docs/PSN.md.
+- Start fails with the error text if the socket cannot be opened or the interface is invalid. A multicast route failure ("No route to host") happens on the stream thread, so it surfaces as a `psn` stream fault shortly after Start rather than as a Start failure; the fault message tells the operator to check the PSN interface (see docs/PSN.md). The fault clears on the next successful Start.
 - Read failures and OSC send failures keep their existing handling; the stream behavior is in the lifecycle table.
 - No automatic resume.
 

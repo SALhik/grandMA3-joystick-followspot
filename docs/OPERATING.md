@@ -64,7 +64,7 @@ To check onPC without a joystick, open **Diagnostics**, set size, seconds per la
 
 **Stop** sends release commands for buttons this tool pressed, stops transmitting, and keeps the current target and zoom/iris level in memory. It does not clear the programmer, release the MArker, blackout the lights or move them home. Resume with Start. Closing the window attempts button releases and stops output.
 
-In PSN position output, **Stop** keeps streaming the last position so the lights stay put, and **Release marker** (Live button or a mapped button) ends the stream so onPC resets the MArker to 0, 0, 0. Closing the window asks first when a stream is open. Details, including the held-position display and what is refused while a stream is held, are in [PSN.md](PSN.md#configure-the-app).
+In PSN position output, **Stop** keeps streaming the last position so the lights stay put, and **Release marker** (Live button or a mapped button) ends the stream so onPC resets the MArker to 0, 0, 0. Closing the window asks first when a stream is open. The Live **Release marker** button acts immediately, with no confirmation, including while output is running (it stops output too). Details, including the held-position display and what is refused while a stream is held, are in [PSN.md](PSN.md#configure-the-app).
 
 On a joystick disconnect or read failure, output stops and the joystick is closed: reconnect, Refresh, then Start. On an OSC send failure, output stops but the joystick stays selected: correct the network problem shown in the status, then Start. Output never resumes automatically. Relaunching restores your saved initial X/Y, Z and zoom/iris level; review those before enabling.
 
@@ -72,7 +72,7 @@ Faults stay visible below the views and in Diagnostics, independently of routine
 
 ## Settings file
 
-Existing settings load without migration: a missing `zoom_enabled` defaults to `false`, a missing `reset_locked` to `true`, and button mappings without `action` remain MA commands. Local mappings use an action, for example `"0": {"action": "toggle"}`; valid actions are `command`, `start`, `stop`, `toggle`, `reset` and `release_marker`. Five settings select the position output and are described in [PSN.md](PSN.md#configure-the-app): `position_output` (`osc` by default, or `psn`), `psn_tracker_id` (1), `psn_group` (`236.10.10.10`), `psn_port` (56565) and `psn_interface` (`127.0.0.1`). A missing one takes its default.
+Existing settings load without migration: a missing `zoom_enabled` defaults to `false`, a missing `reset_locked` to `true`, and button mappings without `action` remain MA commands. Local mappings use an action, for example `"0": {"action": "toggle"}`; valid actions are `command`, `start`, `stop`, `toggle`, `reset` and `release_marker`. Five settings select the position output: `position_output`, `psn_tracker_id`, `psn_group`, `psn_port` and `psn_interface`. Their values and defaults are listed in [PSN.md](PSN.md#configure-the-app); a missing one takes its default.
 
 Stop output before editing settings. **Unsaved changes** marks drafts, including unfinished button editor changes; **Settings saved** means the displayed settings match the applied configuration. **Save settings** validates, saves and applies them. Invalid fields are marked and their page is opened. A failed save preserves the saved configuration. Start and the stopped window Reset also save/apply drafts. The live reset lock remains available during output and saves only its own flag.
 
