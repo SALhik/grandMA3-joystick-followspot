@@ -453,11 +453,14 @@ def local_actions(presses, mappings):
 
 
 class Controller:
-    def __init__(self, settings, send):
+    def __init__(self, settings, send, send_position=None):
         settings.validate()
+        if settings.position_output == 'psn' and send_position is None:
+            raise ValueError('PSN position output needs a position callback.')
         self.settings = settings
         self.motion = Motion(settings)
         self.send = send
+        self.send_position = send_position
         self.active = False
         self.test = False
         self.test_time = 0.0
@@ -492,6 +495,10 @@ class Controller:
             self._output(axes)
 
     def _output_position(self):
+        if self.settings.position_output == 'psn':
+            # The streamer keeps sending; the selection is never touched.
+            self.send_position(tuple(self.motion.xyz))
+            return
         commands = marker_commands(self.settings, self.motion.xyz)
         if commands != self.last_commands:
             # Keep selection and XYZ assignments in one OSC command string.

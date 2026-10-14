@@ -447,5 +447,57 @@ class PsnSettingsTests(unittest.TestCase):
                                          buttons={'4': {'action': 'release_marker', 'press': 'Go+'}}))
 
 
+class PsnControllerTests(unittest.TestCase):
+    def psn(self, **changes):
+        settings = core.Settings.from_dict(dict(core.Settings().to_dict(), position_output='psn', **changes))
+        sent, positions = [], []
+        controller = core.Controller(settings, lambda a, v: sent.append((a, v)), positions.append)
+        return controller, sent, positions
+
+    def test_psn_mode_requires_a_position_callback(self):
+        settings = core.Settings.from_dict(dict(core.Settings().to_dict(), position_output='psn'))
+        with self.assertRaises(ValueError):
+            core.Controller(settings, lambda a, v: None)
+
+    def test_psn_mode_sends_positions_not_marker_commands(self):
+        controller, sent, positions = self.psn()
+        controller.start([0, 0, -1])
+        controller.tick([1, 0, -1], 0.1)
+        self.assertEqual(positions[0], (0.0, 0.0, 1.5))
+        self.assertGreater(positions[-1][0], 0.0)
+        self.assertFalse([a for a, _ in sent if a == '/cmd'])
+
+    def test_psn_mode_keeps_brightness_zoom_and_button_commands_on_osc(self):
+        controller, sent, _ = self.psn(zoom_enabled=True, buttons={'0': {'press': 'Go+ Sequence 10', 'release': 'Off'}})
+        edges = core.ButtonEdges()
+        edges.seed([False])
+        controller.start([0, 0, -1, 0])
+        presses, releases = edges.sample([True])
+        controller.tick([0, 0, -1, 0], 0.03, presses, releases)
+        self.assertIn(('/Page1/Fader201', 0.0), sent)
+        self.assertIn(('/Page1/Fader202', 50.0), sent)
+        self.assertIn(('/cmd', 'Go+ Sequence 10'), sent)
+
+    def test_psn_mode_resends_position_every_tick_even_when_idle(self):
+        controller, _, positions = self.psn()
+        controller.start([0, 0, -1])
+        controller.tick([0, 0, -1], 0.03)
+        controller.tick([0, 0, -1], 0.03)
+        self.assertEqual(len(positions), 3)
+
+    def test_live_reset_in_psn_mode_sends_the_initial_position(self):
+        controller, _, positions = self.psn(reset_locked=False, initial_x=1.0)
+        controller.start([0, 0, -1])
+        controller.motion.xyz = [5.0, 5.0, 1.5]
+        controller.reset_target()
+        self.assertEqual(positions[-1], (1.0, 0.0, 1.5))
+
+    def test_osc_mode_is_unchanged(self):
+        sent = []
+        controller = core.Controller(core.Settings(), lambda a, v: sent.append((a, v)))
+        controller.start([0, 0, -1])
+        self.assertTrue(sent[0][1].startswith('ClearSelection; MArker 1;'))
+
+
 if __name__ == '__main__':
     unittest.main()
