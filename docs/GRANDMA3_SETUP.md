@@ -100,7 +100,7 @@ In the master controls menu, tap **Prog Time** until its green marker disappears
 
 Check in Terminal: `lsof -nP -iUDP:8000` should show onPC listening.
 
-To keep the console selection free, use PSN position output: see [PSN.md](PSN.md). Brightness, zoom / iris and buttons still need this OSC setup.
+In marker control mode, to keep the console selection free, use PSN position output: see [PSN.md](PSN.md). Pan/tilt control cannot use it (see the pan/tilt section below). Brightness, zoom / iris and buttons still need this OSC setup.
 
 ## Step 9. Enter the values in the tool
 
@@ -151,7 +151,7 @@ Check: a figure-8 test with the axis enabled sends the initial zoom/iris level o
 
 ## Optional: pan/tilt control
 
-Use this instead of Steps 2-5 when you want the stick to drive pan and tilt directly rather than a MArker. Do Step 1, then the steps below in place of Steps 2-5, then Steps 6, 7 and 8 as written, then the pan/tilt settings in this section instead of the MArker fields of Step 9.
+Use this instead of Steps 2-5 when you want the stick to drive pan and tilt directly rather than a MArker. Do Step 1, then the steps below in place of Steps 2-5, then Steps 6, 7 and 8 as written, then the pan/tilt settings in this section instead of the MArker fields of Step 9. Pan/tilt control is OSC only: it ignores the PSN settings, so Step 8's advice to use PSN to keep the console selection free does not apply, and every update selects the group (see the command below).
 
 1. Make a group that contains exactly the fixtures to move, and note its number (for example Group 1). All fixtures in the group receive the same pan and tilt percentage.
 2. Run `List Attribute` and confirm the pan and tilt attribute names in your fixture library (normally `Pan` and `Tilt`).
