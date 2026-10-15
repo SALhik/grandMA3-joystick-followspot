@@ -11,7 +11,10 @@ Preserve these agreed requirements when maintaining the project:
 
 - Stick X/Y controls movement **speed**, proportional to deflection after a
   radial dead zone. Returning to centre holds the current target position.
-- The target is one moving grandMA3 **MArker**. Z is a configurable fixed height.
+- In control mode `marker` (default) the target is one moving grandMA3
+  **MArker**; Z is a configurable fixed height. In control mode `pan_tilt`
+  the same two stick axes instead drive the pan and tilt percentages of one
+  fixture group (OSC only).
 - A joystick slider controls absolute brightness through an executor fader.
 - An optional separate axis controls zoom/iris fader **speed**, with its own
   centre, dead zone, inversion and maximum speed. `Motion.zoom_level` tracks
@@ -20,7 +23,8 @@ Preserve these agreed requirements when maintaining the project:
 - A small Tkinter window lets the operator learn axes/buttons, calibrate,
   change settings, and save them between launches.
 - grandMA3 manages physical fixtures, group membership, fixture geometry, and
-  XYZ aiming. The script does not compute pan/tilt or maintain a fixture list.
+  XYZ aiming. The script does not compute aim from geometry or maintain a fixture
+  list; pan/tilt mode only integrates the stick into pan/tilt percentages.
 - Keep installation simple. There are no third-party Python packages and no
   requirement for a signed app or an Apple developer account.
 
@@ -33,8 +37,8 @@ current code and Git state, and preserve unrelated operator changes.
 | File | Responsibility |
 | --- | --- |
 | `followspot.py` | Tkinter window, settings editor, device selection/learning, polling, start/stop lifecycle, diagnostic CLI |
-| `followspot_ui.py` | Native Live/Setup/Diagnostics views, read-only stage/level previews, draft/readiness feedback, field-error navigation and scroll layout |
-| `followspot_core.py` | Settings validation/persistence, proportional motion, coordinate conversion, OSC encoding/sending, PSN packet encoders and `PsnStreamer` (background 30 Hz PSN sender), the button edge tracker and output controller |
+| `followspot_ui.py` | Native Live/Setup/Diagnostics views, read-only stage/level previews, draft/readiness feedback, field-error navigation and scroll layout, control-mode field states |
+| `followspot_core.py` | Settings validation/persistence, proportional motion, coordinate conversion, OSC encoding/sending, PSN packet encoders and `PsnStreamer` (background 30 Hz PSN sender), the button edge tracker and output controller, pan/tilt motion and group command |
 | `joystick.py` | SDL2 and native macOS HID readers via `ctypes`, normalization and the combined device list |
 | `Launch Followspot.command` | Selects a Tk-capable Python and launches the window |
 | `Launch Followspot.bat` | Windows equivalent of the launcher; SDL2 only (no native HID), untested on Windows |
@@ -114,7 +118,23 @@ failures; never report skipped or blocked hardware checks as passing.
   is held and output is stopped, but `apply_settings` refuses a changed PSN field
   until Release. Validation does not change with the mode (`marker_id` and the
   Movement Space still apply even though PSN does not use them for conversion).
-- Test mode (`Controller.start(test=True)`) needs no joystick: a figure 8 around the initial X/Y (`figure_eight`) and fixed `test_brightness`. `poll` skips joystick reads and button processing while a test runs; failures stop output like normal.
+- Control mode (`control_mode` = `marker` default or `pan_tilt`). `pan_tilt` is
+  OSC only: `Controller` sends `ClearSelection; Group <fixture_group>; Attribute
+  "Pan" At Absolute Percent <p>; Attribute "Tilt" At Absolute Percent <t>` only
+  when the values change (no idle resend; Reset forces one resend), needs no
+  `send_position`, and no `PsnStreamer` is created. `Motion.pan_tilt` (percent,
+  clamped to `pan_min/max`, `tilt_min/max`) and `Motion.xyz` are both kept; only
+  the active mode is stepped, and Save/apply carries and clamps both. `axis_x`
+  drives pan and `axis_y` tilt with the existing centre, dead zone and inversion;
+  speed is `pan_tilt_speed` percentage points per second with the same
+  `MAX_STEP` cap. `position_output` and the `psn_*` fields are saved and
+  validated but ignored in this mode, and validation never depends on the mode.
+  `control_mode` is in `PSN_FIELDS`, so it cannot change while a PSN stream is
+  held. In Setup the draft selector (`app.values['control_mode']`) decides which
+  editors are enabled (`FollowspotView.apply_field_states`, recomputed in
+  `refresh`, never stored as the widget's base state); Live follows the applied
+  settings.
+- Test mode (`Controller.start(test=True)`) needs no joystick: a figure 8 around the initial X/Y (`figure_eight`) or, in pan/tilt mode, the initial pan/tilt (`figure_eight_pan_tilt`) and fixed `test_brightness`. `poll` skips joystick reads and button processing while a test runs; failures stop output like normal.
 - Settings changes require stopped output. Release commands must be attempted
   before closing the sender, and release failures must remain visible.
 - Setup and Diagnostics stay readable while running; disable editors, not tabs.
@@ -151,7 +171,9 @@ failures; never report skipped or blocked hardware checks as passing.
   MArker **Target Space**. Defaults are examples, not measured stage geometry.
 - MA receives a single OSC message, not an OSC bundle. OSC position output uses
   `/cmd` (PSN mode streams the position instead) with an OSC string containing semicolon-separated commands. Clear only the
-  selection, select the configured MArker, then set its attributes:
+  selection, select the configured MArker, then set its attributes (in `pan_tilt`
+  control mode the selected object is the fixture group and the attributes are
+  Pan/Tilt; see the Control mode bullet):
 
   ```text
   ClearSelection; MArker 1; Attribute "XYZ_X" At Absolute Percent 50; Attribute "XYZ_Y" At Absolute Percent 50; Attribute "XYZ_Z" At Absolute Percent 50.75
@@ -230,12 +252,56 @@ step-by-step setup guide, and the Windows launcher. None has operator
 confirmation recorded here: zoom/iris movement in a test show and the Windows
 launcher on real hardware remain unverified.
 
+Pan/tilt control mode was added on 2026-10-15 (branch `feat/pan-tilt-control`)
+and is covered by automated tests only. Not verified: that onPC accepts the
+`Group <n>; Attribute "Pan"/"Tilt" At Absolute Percent` command over OSC and
+moves the lights, that 0-100% spans the full fixture range, the default tilt
+direction, how fixtures that followed a MArker behave after a mode switch, and
+the Setup / Live layout in the real window. See docs/GRANDMA3_SETUP.md,
+Optional: pan/tilt control, for the operator checklist.
+
+Known minor issues in the pan/tilt work (found in review, not fixed):
+
+- A full-suite run once printed three Tk `invalid command name ...<lambda>` lines.
+  `show_error` queues `after_idle(reveal)`, and
+  `test_error_in_a_disabled_field_says_how_to_reach_it` can end without draining
+  idle events. It is test noise, was not reproduced in later runs and is not a
+  product fault. Fix: `update_idletasks()` in the test or a `winfo_exists` guard
+  in `reveal`.
+- The Press / Release command entries are owned by two code paths,
+  `update_button_editor` and `apply_field_states`. They agree today (a regression
+  test pins Start / Stop with a local action loaded); a single owner would be safer.
+- Test gaps: no test of a mapped Reset in pan/tilt mode skipping integration (the
+  `dt = 0` path is mode-agnostic), of the Diagnostics row shift, or of `show_error`
+  focusing a disabled widget. The settings round-trip test covers pan only, the
+  range-error tests are loose (`initial_tilt` is not tested on its own), and the
+  core `control_mode` guard test only asserts that the key is in `PSN_FIELDS`
+  (a window test covers the behaviour).
+- `Motion.step` still writes `xyz[2] = z` in pan/tilt mode (harmless).
+- The pan/tilt range error uses "0-100" with a hyphen where neighbouring messages
+  use an en dash.
+- With no PSN stream, Release marker (button or mapped action) in pan/tilt mode
+  only sets the status "No PSN stream is open."; the mapped-button action is
+  labelled "Release PSN marker" elsewhere. The command string is quoted in
+  docs/OPERATING.md, docs/GRANDMA3_SETUP.md and here.
+- In docs/GRANDMA3_SETUP.md the code fence inside the numbered pan/tilt list may
+  render the next item as a new list. The historical plan
+  `docs/superpowers/plans/2026-10-15-pan-tilt-control.md` still carries earlier
+  wording of some docs text; leave it.
+- Design choices, not defects: Start sends the displayed pan/tilt to the whole
+  group at full speed (first use snaps to 50 / 50); one group and one pan/tilt
+  pair for all fixtures (no per-fixture values); fields for the other control mode
+  are disabled, not hidden; the Diagnostics labels are static; the Control
+  selector shows the literal values `marker` and `pan_tilt`; a settings file
+  saved by this version is refused by an older checkout.
+
 Automated coverage: core motion/configuration/OSC-packet tests, simulated SDL
 input/disconnect, native HID discovery and combined-list tests with doubles,
 PSN encoder (pinned bytes), streamer (injected sockets; one real socket open, no packet is
 received by a real listener) and controller tests, headless window lifecycle tests (including
 zoom/iris, test mode and PSN stream hold/release/close, faults and button priority), real Tk
-workflow tests, and a visible startup test with the real backend. Tk tests skip
+workflow tests, pan/tilt coverage in each layer (core motion, validation and OSC-string tests;
+headless window tests; real Tk tests for the Control selector, greyed fields, captions and error labels), and a visible startup test with the real backend. Tk tests skip
 when Tk is missing or cannot open a window. The
 Windows launcher has no automated coverage. MA's installed 2.5 system tests
 confirm the `XYZ_X`, `XYZ_Y`, `XYZ_Z`, and `XYZ_MArker` attribute names.

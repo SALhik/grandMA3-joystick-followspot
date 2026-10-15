@@ -11,7 +11,7 @@ import time
 
 from followspot_core import (BUTTON_ACTIONS, PSN_FIELDS, ButtonEdges, Controller, OscSender, PsnStreamer, Settings,
                               SettingsError, clamp, learn_axis, local_actions, setting_types)
-from followspot_ui import AXIS_NAMES, PERCENT_FIELDS, FollowspotView, display_value
+from followspot_ui import PERCENT_FIELDS, FollowspotView, axis_name, display_value
 from joystick import Joystick
 
 SETTINGS_PATH = Path(__file__).resolve().with_name('settings.json')
@@ -183,7 +183,7 @@ class App:
             self.status.set('Connect a joystick and stop output before learning a control.')
             return
         self.learning = (key, list(self.axes), list(self.buttons), time.monotonic() + 8)
-        text = 'Press the desired button…' if key == 'button' else f'Move only the {AXIS_NAMES[key]}…'
+        text = 'Press the desired button…' if key == 'button' else f'Move only the {axis_name(key, self.values["control_mode"].get())}…'
         self.view.set_feedback(key, text + ' (8 seconds)')
         self.status.set(text)
 
@@ -230,14 +230,16 @@ class App:
             if self.view.mapping_pending():
                 raise SettingsError('Add / update the button mapping or discard editor changes before saving.', 'buttons')
             settings = settings_from_values(self.values, self.draft_buttons)
-            if self.streamer is not None and any(getattr(settings, key) != getattr(self.settings, key) for key in PSN_FIELDS):
-                raise SettingsError('Release the PSN marker before changing position output or PSN settings.', *PSN_FIELDS)
+            changed = [key for key in PSN_FIELDS if getattr(settings, key) != getattr(self.settings, key)]
+            if self.streamer is not None and changed:
+                raise SettingsError('Release the PSN marker before changing control mode, position output or PSN settings.', *changed)
             settings.save(self.settings_path)
         except (OSError, ValueError) as exc:
             self.view.show_error(exc)
             self.record_fault('settings', f'Settings were not saved: {exc}')
             return False
         xyz = self.controller.motion.xyz
+        pan_tilt = self.controller.motion.pan_tilt
         zoom_level = self.controller.motion.zoom_level
         self.settings = settings
         self.view.clear_errors()
@@ -245,6 +247,8 @@ class App:
         self.controller = Controller(settings, self.send, self.send_position)
         self.controller.motion.xyz = [clamp(xyz[0], settings.x_min, settings.x_max),
                                       clamp(xyz[1], settings.y_min, settings.y_max), settings.z]
+        self.controller.motion.pan_tilt = [clamp(pan_tilt[0], settings.pan_min, settings.pan_max),
+                                           clamp(pan_tilt[1], settings.tilt_min, settings.tilt_max)]
         self.controller.motion.zoom_level = zoom_level
         self.update_position()
         self.status.set('Settings saved and applied. Output remains stopped.')
@@ -280,7 +284,7 @@ class App:
                 self.sender.close()
             s = self.settings
             self.sender = OscSender(s.host, s.port, s.prefix)
-            if s.position_output == 'psn':
+            if s.control_mode == 'marker' and s.position_output == 'psn':
                 created_stream = self.open_streamer()
             self.controller.start(self.axes, test=test)
             self.last_tick = time.monotonic()
@@ -288,7 +292,9 @@ class App:
             self.clear_fault('psn')
             self.output_label.set('TEST RUNNING (figure 8)' if test else 'OUTPUT RUNNING')
             self.lock_settings(True)
-            self.status.set('Test running: the marker traces a figure 8; the joystick is ignored. Stop ends it.' if test else
+            marker = s.control_mode == 'marker'
+            self.status.set(('Test running: ' + ('the marker traces a figure 8' if marker else 'pan and tilt trace a figure 8') +
+                             '; the joystick is ignored. Stop ends it.') if test else
                             'Output running. Centre holds position and zoom/iris. Stop retains tracked levels.')
         except (OSError, RuntimeError, ValueError) as exc:
             if created_stream:
@@ -408,11 +414,15 @@ class App:
             return False
 
     def update_position(self):
-        x, y, z = self.controller.motion.xyz
-        text = f'X {x:+.3f} m   Y {y:+.3f} m   Z {z:.3f} m'
-        if self.streamer is not None and not self.controller.active:
-            hx, hy, hz = self.streamer.position
-            text += f'\nHeld at  X {hx:+.3f} m   Y {hy:+.3f} m   Z {hz:.3f} m'
+        if self.settings.control_mode == 'pan_tilt':
+            pan, tilt = self.controller.motion.pan_tilt
+            text = f'Pan {pan:.1f}%   Tilt {tilt:.1f}%'
+        else:
+            x, y, z = self.controller.motion.xyz
+            text = f'X {x:+.3f} m   Y {y:+.3f} m   Z {z:.3f} m'
+            if self.streamer is not None and not self.controller.active:
+                hx, hy, hz = self.streamer.position
+                text += f'\nHeld at  X {hx:+.3f} m   Y {hy:+.3f} m   Z {hz:.3f} m'
         self.position_label.set(text)
         self.zoom_label.set(f'Zoom / iris  {self.controller.motion.zoom_level:.1f}%' if self.settings.zoom_enabled else
                             'Zoom / iris  disabled')

@@ -1,15 +1,15 @@
 # Joystick Followspot
 
-A small Python controller for grandMA3 onPC 2.5, running on the same computer as onPC (macOS, with an untested Windows launcher). The stick moves one virtual MArker across X/Y: further deflection means faster movement; releasing it holds the position. Z is set in the window. The slider controls an executor's brightness fader. An optional extra axis changes a zoom or iris executor's fader at a proportional speed and holds its tracked level at centre. Buttons send editable commands on press/release or control output locally.
+A small Python controller for grandMA3 onPC 2.5, running on the same computer as onPC (macOS, with an untested Windows launcher). The stick moves one virtual MArker across X/Y, or optionally drives the pan and tilt of one fixture group directly: further deflection means faster movement; releasing it holds the position. Z is set in the window. The slider controls an executor's brightness fader. An optional extra axis changes a zoom or iris executor's fader at a proportional speed and holds its tracked level at centre. Buttons send editable commands on press/release or control output locally.
 
-All physical fixture assignment and XYZ aiming stay in grandMA3. This tool does not calculate pan/tilt or manage a fixture list.
+All physical fixture assignment and aiming stay in grandMA3. This tool does not compute aim from stage geometry or manage a fixture list; in pan/tilt mode it only integrates the stick into pan and tilt percentages.
 
 ## Documentation
 
 | Document | Contents |
 | --- | --- |
 | [docs/GRANDMA3_SETUP.md](docs/GRANDMA3_SETUP.md) | Step-by-step onPC setup with every command, the figure-8 test, troubleshooting |
-| [docs/OPERATING.md](docs/OPERATING.md) | Joystick configuration, buttons, reset lock, zoom/iris, test mode, stop/restart, settings file, limitations |
+| [docs/OPERATING.md](docs/OPERATING.md) | Joystick configuration, marker or pan/tilt control, buttons, reset lock, zoom/iris, test mode, stop/restart, settings file, limitations |
 | [docs/PSN.md](docs/PSN.md) | Optional PSN position output that moves the MArker without taking the console selection: app and onPC setup, Stop vs Release marker, findings, test sender, packet format (checked with the test sender only) |
 | [AGENTS.md](AGENTS.md) | For AI agents and contributors: code map, workflow, integration contracts, verification limits |
 

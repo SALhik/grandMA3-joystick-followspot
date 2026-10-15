@@ -18,7 +18,7 @@ MAX_STEP = 0.25
 BUTTON_ACTIONS = {'command': 'MA command', 'start': 'Start output',
                   'stop': 'Stop output', 'toggle': 'Toggle output',
                   'reset': 'Reset target', 'release_marker': 'Release PSN marker'}
-PSN_FIELDS = ('position_output', 'psn_tracker_id', 'psn_group', 'psn_port', 'psn_interface')
+PSN_FIELDS = ('control_mode', 'position_output', 'psn_tracker_id', 'psn_group', 'psn_port', 'psn_interface')
 
 
 def clamp(value, low, high):
@@ -85,6 +85,18 @@ class Settings:
     psn_group: str = '236.10.10.10'
     psn_port: int = 56565
     psn_interface: str = '127.0.0.1'
+    control_mode: str = 'marker'
+    fixture_group: int = 1
+    attribute_pan: str = 'Pan'
+    attribute_tilt: str = 'Tilt'
+    pan_tilt_speed: float = 25.0
+    pan_min: float = 0.0
+    pan_max: float = 100.0
+    tilt_min: float = 0.0
+    tilt_max: float = 100.0
+    initial_pan: float = 50.0
+    initial_tilt: float = 50.0
+    test_pan_tilt_size: float = 10.0
     buttons: dict = field(default_factory=dict)
 
     def to_dict(self):
@@ -156,6 +168,19 @@ class Settings:
             raise SettingsError('OSC port must be 1–65535.', 'port')
         if self.position_output not in ('osc', 'psn'):
             raise SettingsError('Position output must be osc or psn.', 'position_output')
+        if self.control_mode not in ('marker', 'pan_tilt'):
+            raise SettingsError('Control mode must be marker or pan_tilt.', 'control_mode')
+        if self.fixture_group < 1:
+            raise SettingsError('Fixture group must be positive.', 'fixture_group')
+        if not 0 < self.pan_tilt_speed <= 1000:
+            raise SettingsError('Pan/tilt speed must be greater than 0 and at most 1000 percentage points/s.', 'pan_tilt_speed')
+        for axis in ('pan', 'tilt'):
+            lo, hi, initial = getattr(self, f'{axis}_min'), getattr(self, f'{axis}_max'), getattr(self, f'initial_{axis}')
+            if not 0 <= lo < hi <= 100 or not lo <= initial <= hi:
+                raise SettingsError(f'{axis.capitalize()} limits must be 0-100 with the minimum below the maximum, and contain the initial value.',
+                                    f'{axis}_min', f'{axis}_max', f'initial_{axis}')
+        if not 0 < self.test_pan_tilt_size <= 50:
+            raise SettingsError('Pan/tilt test size must be greater than 0 and at most 50 percentage points.', 'test_pan_tilt_size')
         if not 1 <= self.psn_tracker_id <= 65535:
             raise SettingsError('PSN tracker ID must be 1–65535.', 'psn_tracker_id')
         if not 1 <= self.psn_port <= 65535:
@@ -174,7 +199,7 @@ class Settings:
             raise SettingsError('OSC host must be an IP address or hostname without spaces.', 'host')
         if self.prefix and not re.fullmatch(r'[A-Za-z0-9_.-]+', self.prefix):
             raise SettingsError('OSC prefix must contain only letters, numbers, dot, underscore or hyphen, without slashes.', 'prefix')
-        for key in ('attribute_x', 'attribute_y', 'attribute_z'):
+        for key in ('attribute_x', 'attribute_y', 'attribute_z', 'attribute_pan', 'attribute_tilt'):
             if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*', getattr(self, key)):
                 raise SettingsError('Use a valid MA attribute library name.', key)
         if not isinstance(self.buttons, dict):
@@ -221,6 +246,7 @@ class Motion:
     def __init__(self, settings):
         self.settings = settings
         self.xyz = [settings.initial_x, settings.initial_y, settings.z]
+        self.pan_tilt = [settings.initial_pan, settings.initial_tilt]
         self.zoom_level = settings.initial_zoom
 
     def check_axes(self, axes):
@@ -242,8 +268,12 @@ class Motion:
         x = centred_axis(axes[s.axis_x], s.centre_x, s.invert_x)
         y = centred_axis(axes[s.axis_y], s.centre_y, s.invert_y)
         radius = math.hypot(x, y)
-        speed = max(0.0, min(1.0, (radius - s.dead_zone) / (1 - s.dead_zone))) * s.max_speed
-        if radius:
+        pan_tilt = s.control_mode == 'pan_tilt'
+        speed = max(0.0, min(1.0, (radius - s.dead_zone) / (1 - s.dead_zone))) * (s.pan_tilt_speed if pan_tilt else s.max_speed)
+        if radius and pan_tilt:
+            self.pan_tilt[0] = clamp(self.pan_tilt[0] + x / radius * speed * dt, s.pan_min, s.pan_max)
+            self.pan_tilt[1] = clamp(self.pan_tilt[1] + y / radius * speed * dt, s.tilt_min, s.tilt_max)
+        elif radius:
             self.xyz[0] = clamp(self.xyz[0] + x / radius * speed * dt, s.x_min, s.x_max)
             self.xyz[1] = clamp(self.xyz[1] + y / radius * speed * dt, s.y_min, s.y_max)
         self.xyz[2] = s.z
@@ -265,6 +295,13 @@ def figure_eight(s, t):
             clamp(s.initial_y + s.test_size / 2 * math.sin(2 * phase), s.y_min, s.y_max), s.z]
 
 
+def figure_eight_pan_tilt(s, t):
+    """Pan/tilt test target: a figure 8 around the initial pan/tilt, kept inside the limits."""
+    phase = 2 * math.pi * t / s.test_period
+    return [clamp(s.initial_pan + s.test_pan_tilt_size * math.sin(phase), s.pan_min, s.pan_max),
+            clamp(s.initial_tilt + s.test_pan_tilt_size / 2 * math.sin(2 * phase), s.tilt_min, s.tilt_max)]
+
+
 def learn_axis(before, after, threshold=0.3):
     if len(before) != len(after) or not before:
         return None
@@ -282,6 +319,14 @@ def marker_commands(s, xyz):
         percent = clamp((value - lo) / (hi - lo) * 100, 0, 100)
         attr = getattr(s, f'attribute_{axis}')
         commands.append(f'Attribute "{attr}" At Absolute Percent {percent:.6f}')
+    return commands
+
+
+def pan_tilt_commands(s, pan_tilt):
+    # Same shape as marker_commands: ClearSelection isolates the group and keeps programmer values.
+    commands = ['ClearSelection', f'Group {s.fixture_group}']
+    for attribute, value in zip((s.attribute_pan, s.attribute_tilt), pan_tilt):
+        commands.append(f'Attribute "{attribute}" At Absolute Percent {clamp(value, 0, 100):.6f}')
     return commands
 
 
@@ -455,7 +500,7 @@ def local_actions(presses, mappings):
 class Controller:
     def __init__(self, settings, send, send_position=None):
         settings.validate()
-        if settings.position_output == 'psn' and send_position is None:
+        if settings.control_mode == 'marker' and settings.position_output == 'psn' and send_position is None:
             raise ValueError('PSN position output needs a position callback.')
         self.settings = settings
         self.motion = Motion(settings)
@@ -487,21 +532,31 @@ class Controller:
             raise ValueError('Output is already active.')
         self.test, self.test_time = test, 0.0
         if test:
-            self.motion.xyz = figure_eight(self.settings, 0)
+            self._set_test_position(0)
         self.pressed.clear()
         self.last_commands = self.last_brightness = self.last_zoom = None
         self.active = True
         with self._stop_on_failure():
             self._output(axes)
 
+    def _set_test_position(self, t):
+        if self.settings.control_mode == 'pan_tilt':
+            self.motion.pan_tilt = figure_eight_pan_tilt(self.settings, t)
+        else:
+            self.motion.xyz = figure_eight(self.settings, t)
+
     def _output_position(self):
-        if self.settings.position_output == 'psn':
+        s = self.settings
+        if s.control_mode == 'pan_tilt':
+            commands = pan_tilt_commands(s, self.motion.pan_tilt)
+        elif s.position_output == 'psn':
             # The streamer keeps sending; the selection is never touched.
             self.send_position(tuple(self.motion.xyz))
             return
-        commands = marker_commands(self.settings, self.motion.xyz)
+        else:
+            commands = marker_commands(s, self.motion.xyz)
         if commands != self.last_commands:
-            # Keep selection and XYZ assignments in one OSC command string.
+            # Keep selection and position assignments in one OSC command string.
             # MA does not accept OSC bundles.
             self.send('/cmd', '; '.join(commands))
             self.last_commands = commands
@@ -527,7 +582,10 @@ class Controller:
         if self.active and self.settings.reset_locked:
             return False
         s = self.settings
-        self.motion.xyz = [s.initial_x, s.initial_y, s.z]
+        if s.control_mode == 'pan_tilt':
+            self.motion.pan_tilt = [s.initial_pan, s.initial_tilt]
+        else:
+            self.motion.xyz = [s.initial_x, s.initial_y, s.z]
         self.motion.zoom_level = s.initial_zoom
         if self.active:
             with self._stop_on_failure():
@@ -545,7 +603,7 @@ class Controller:
         with self._stop_on_failure():
             if self.test:
                 self.test_time += min(max(dt, 0), MAX_STEP)
-                self.motion.xyz = figure_eight(self.settings, self.test_time)
+                self._set_test_position(self.test_time)
             else:
                 self.motion.step(axes, dt)
             self._output(axes)

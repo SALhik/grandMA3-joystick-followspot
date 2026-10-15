@@ -7,6 +7,24 @@ PERCENT_FIELDS = {'dead_zone', 'zoom_dead_zone'}
 AXIS_NAMES = {'axis_x': 'left / right control', 'axis_y': 'upstage / downstage control',
               'axis_slider': 'brightness slider', 'axis_zoom': 'zoom / iris control',
               'button': 'button'}
+PAN_TILT_AXIS_NAMES = {'axis_x': 'pan control (left / right)', 'axis_y': 'tilt control (up / down)'}
+
+
+def axis_name(key, control_mode):
+    """Prompt wording for a learnable control; pan/tilt renames the two stick axes."""
+    if control_mode == 'pan_tilt' and key in PAN_TILT_AXIS_NAMES:
+        return PAN_TILT_AXIS_NAMES[key]
+    return AXIS_NAMES[key]
+
+
+AXIS_CAPTIONS = {'axis_x': ('Left / right axis', 'Pan (left / right) axis'),
+                 'axis_y': ('Upstage / downstage axis', 'Tilt (up / down) axis')}
+MARKER_FIELDS = ('marker_id', 'z', 'x_min', 'x_max', 'y_min', 'y_max', 'initial_x', 'initial_y',
+                 'space_x_min', 'space_x_max', 'space_y_min', 'space_y_max', 'space_z_min', 'space_z_max',
+                 'attribute_x', 'attribute_y', 'attribute_z', 'max_speed', 'position_output',
+                 'psn_tracker_id', 'psn_group', 'psn_port', 'psn_interface', 'test_size')
+PAN_TILT_FIELDS = ('fixture_group', 'attribute_pan', 'attribute_tilt', 'pan_tilt_speed', 'pan_min', 'pan_max',
+                   'tilt_min', 'tilt_max', 'initial_pan', 'initial_tilt', 'test_pan_tilt_size')
 
 
 def display_value(key, value):
@@ -32,6 +50,9 @@ class FollowspotView:
         self.reset_state = tk.StringVar()
         self.brightness_context = tk.StringVar()
         self.editing_state = tk.StringVar()
+        self.stage_title = tk.StringVar()
+        # Last state/text applied per widget, so refresh (every poll) only touches Tk on a change.
+        self.field_states, self.caption_texts = {}, {}
         self.brightness = tk.DoubleVar()
         self.zoom = tk.DoubleVar()
         self.title_font = font.nametofont('TkDefaultFont').copy()
@@ -76,6 +97,18 @@ class FollowspotView:
         # The parent carries the page even when this field is in an advanced section.
         self.field_pages[key] = self.current_page
         return widget
+
+    def choice(self, parent, row, label, key, values):
+        caption = self.ttk.Label(parent, text=label)
+        caption.grid(row=row, column=0, sticky='w', padx=(0, 16), pady=5)
+        self.field_captions[key] = caption
+        box = self.edit(self.ttk.Combobox(parent, textvariable=self.app.values[key], values=values,
+                                          state='readonly', width=10), 'readonly')
+        box.grid(row=row, column=1, sticky='w', pady=5)
+        self.fields[key] = box
+        self.field_labels[key] = label
+        self.field_pages[key] = self.current_page
+        return box
 
     def page(self, notebook, title):
         shell = self.ttk.Frame(notebook)
@@ -161,7 +194,7 @@ class FollowspotView:
         app, ttk = self.app, self.ttk
         live.columnconfigure(0, weight=1)
         live.rowconfigure(1, weight=1)
-        ttk.Label(live, text='Tracked target · top view').grid(row=0, column=0, sticky='w', pady=(0, 8))
+        ttk.Label(live, textvariable=self.stage_title).grid(row=0, column=0, sticky='w', pady=(0, 8))
         self.stage = self.tk.Canvas(live, height=210, width=360, highlightthickness=0,
                                     background=self.background)
         self.stage.grid(row=1, column=0, sticky='nsew', padx=(0, 24))
@@ -230,15 +263,17 @@ class FollowspotView:
         self.advanced_fields(parent, 15, [('centre_x', 'X centre offset'), ('centre_y', 'Y centre offset')])
 
     def build_target(self, parent):
-        self.entry(parent, 0, 'MArker CID', 'marker_id')
-        self.entry(parent, 1, 'Z height (m)', 'z')
-        self.ttk.Label(parent, text='Operating limits and initial target (m)').grid(row=2, column=0, columnspan=4, sticky='w', pady=(12, 4))
+        self.choice(parent, 0, 'Control', 'control_mode', ['marker', 'pan_tilt'])
+        self.label(parent, text='marker moves one MArker and onPC aims the fixtures at it. pan_tilt drives the pan and tilt of one fixture group directly, over OSC only.').grid(row=1, column=0, columnspan=4, sticky='w', pady=(0, 8))
+        self.entry(parent, 2, 'MArker CID', 'marker_id')
+        self.entry(parent, 3, 'Z height (m)', 'z')
+        self.ttk.Label(parent, text='Operating limits and initial target (m)').grid(row=4, column=0, columnspan=4, sticky='w', pady=(12, 4))
         for row, (key, label) in enumerate([('x_min', 'X minimum'), ('x_max', 'X maximum'),
                                           ('y_min', 'Y minimum'), ('y_max', 'Y maximum'),
-                                          ('initial_x', 'Initial / reset X'), ('initial_y', 'Initial / reset Y')], 3):
+                                          ('initial_x', 'Initial / reset X'), ('initial_y', 'Initial / reset Y')], 5):
             self.entry(parent, row, label, key)
-        self.ttk.Label(parent, text='MArker movement space (m) · match onPC').grid(row=9, column=0, columnspan=4, sticky='w', pady=(12, 4))
-        for row, axis in enumerate('xyz', 10):
+        self.ttk.Label(parent, text='MArker movement space (m) · match onPC').grid(row=11, column=0, columnspan=4, sticky='w', pady=(12, 4))
+        for row, axis in enumerate('xyz', 12):
             self.entry(parent, row, axis.upper() + ' minimum', f'space_{axis}_min', width=12)
             caption = self.ttk.Label(parent, text='Maximum')
             caption.grid(row=row, column=2, padx=12)
@@ -248,7 +283,17 @@ class FollowspotView:
             self.fields[key], self.field_pages[key] = widget, self.current_page
             self.field_labels[key] = axis.upper() + ' movement space maximum'
             self.field_captions[key] = caption
-        self.label(parent, text='Operating limits fit inside the movement space. Defaults are examples; confirm the actual movement space in onPC.').grid(row=13, column=0, columnspan=4, sticky='w', pady=12)
+        self.label(parent, text='Operating limits fit inside the movement space. Defaults are examples; confirm the actual movement space in onPC.').grid(row=15, column=0, columnspan=4, sticky='w', pady=12)
+        self.ttk.Label(parent, text='Pan / tilt (% of the fixture range)', font=self.state_font).grid(row=16, column=0, columnspan=4, sticky='w', pady=(20, 4))
+        self.entry(parent, 17, 'Fixture group', 'fixture_group')
+        self.entry(parent, 18, 'Pan attribute', 'attribute_pan')
+        self.entry(parent, 19, 'Tilt attribute', 'attribute_tilt')
+        self.entry(parent, 20, 'Maximum speed (% points/s)', 'pan_tilt_speed')
+        for row, (key, label) in enumerate([('pan_min', 'Pan minimum (%)'), ('pan_max', 'Pan maximum (%)'),
+                                          ('tilt_min', 'Tilt minimum (%)'), ('tilt_max', 'Tilt maximum (%)'),
+                                          ('initial_pan', 'Initial / reset pan (%)'), ('initial_tilt', 'Initial / reset tilt (%)')], 21):
+            self.entry(parent, row, label, key)
+        self.label(parent, text='Pan/tilt output selects the group, then sets Pan and Tilt as absolute percent, so it takes the console selection while output runs. Limits keep the lights inside a safe range. Confirm the attribute names with List Attribute in onPC.').grid(row=27, column=0, columnspan=4, sticky='w', pady=12)
 
     def build_levels(self, parent):
         app, ttk = self.app, self.ttk
@@ -285,7 +330,7 @@ class FollowspotView:
         for row, (key, label) in enumerate([('psn_tracker_id', 'PSN tracker ID'), ('psn_group', 'PSN multicast group'),
                                             ('psn_port', 'PSN port'), ('psn_interface', 'PSN interface (this computer)')], 8):
             self.entry(parent, row, label, key, width=26)
-        self.label(parent, text='osc moves the MArker with commands and takes the console selection. psn streams the position without touching the selection; brightness, zoom / iris and buttons still use OSC. In onPC set the PSN row Interface to this computer, add a tracker whose Tracker ID and MArker ID match, and see docs/PSN.md. Stop holds the position; Release marker lets the MArker reset to 0, 0, 0.').grid(row=12, column=0, columnspan=3, sticky='w', pady=12)
+        self.label(parent, text='osc moves the MArker with commands and takes the console selection. psn streams the position without touching the selection; brightness, zoom / iris and buttons still use OSC. In onPC set the PSN row Interface to this computer, add a tracker whose Tracker ID and MArker ID match, and see docs/PSN.md. Stop holds the position; Release marker lets the MArker reset to 0, 0, 0. Position output applies to Marker control only; Pan-tilt control always uses OSC.').grid(row=12, column=0, columnspan=3, sticky='w', pady=12)
 
     def build_mappings(self, parent):
         app, ttk = self.app, self.ttk
@@ -340,17 +385,19 @@ class FollowspotView:
         self.label(parent, variable=app.axes_label, font='TkFixedFont').grid(row=1, column=0, columnspan=3, sticky='w', pady=8)
         self.label(parent, variable=app.buttons_label).grid(row=2, column=0, columnspan=3, sticky='w')
         ttk.Label(parent, text='Figure 8 test · sends real output', font=self.state_font).grid(row=3, column=0, columnspan=3, sticky='w', pady=(20, 8))
-        for row, (key, label) in enumerate([('test_size', 'Figure 8 half-width (m)'), ('test_period', 'Seconds per lap'),
+        for row, (key, label) in enumerate([('test_size', 'Figure 8 half-width, marker (m)'),
+                                            ('test_pan_tilt_size', 'Figure 8 half-swing, pan/tilt (% points)'),
+                                            ('test_period', 'Seconds per lap'),
                                             ('test_brightness', 'Test brightness (%)')], 4):
             self.entry(parent, row, label, key)
         app.test_button = ttk.Button(parent, text='Start test (figure 8)', command=lambda: app.start_output(test=True))
-        app.test_button.grid(row=7, column=0, sticky='w', pady=8)
-        self.label(parent, text='No joystick needed. Sends OSC around the initial target at the test brightness; joystick input is ignored. Use Stop output above to end the test.').grid(row=8, column=0, columnspan=3, sticky='w', pady=4)
-        ttk.Label(parent, text='OSC reception', font=self.state_font).grid(row=9, column=0, columnspan=3, sticky='w', pady=(20, 8))
-        self.label(parent, text='UDP send success does not confirm reception. In onPC, use EchoInput and System Monitor to check incoming commands. Check Input, Receive, Receive Command, Interface/IP, port and prefix.').grid(row=10, column=0, columnspan=3, sticky='w')
-        self.label(parent, variable=app.fault_label, style='Fault.TLabel').grid(row=11, column=0, columnspan=3, sticky='w', pady=12)
+        app.test_button.grid(row=8, column=0, sticky='w', pady=8)
+        self.label(parent, text='No joystick needed. Sends OSC around the initial target (marker or pan/tilt, per the applied control mode) at the test brightness; joystick input is ignored. Use Stop output above to end the test.').grid(row=9, column=0, columnspan=3, sticky='w', pady=4)
+        ttk.Label(parent, text='OSC reception', font=self.state_font).grid(row=10, column=0, columnspan=3, sticky='w', pady=(20, 8))
+        self.label(parent, text='UDP send success does not confirm reception. In onPC, use EchoInput and System Monitor to check incoming commands. Check Input, Receive, Receive Command, Interface/IP, port and prefix.').grid(row=11, column=0, columnspan=3, sticky='w')
+        self.label(parent, variable=app.fault_label, style='Fault.TLabel').grid(row=12, column=0, columnspan=3, sticky='w', pady=12)
         self.release_ack = ttk.Button(parent, text='Acknowledge release warning', command=lambda: app.clear_fault('release'))
-        self.release_ack.grid(row=12, column=0, sticky='w')
+        self.release_ack.grid(row=13, column=0, sticky='w')
 
     def editor_values(self):
         app = self.app
@@ -389,6 +436,7 @@ class FollowspotView:
         for layout in self.page_layouts:
             layout()
         self.resize()
+        self.apply_field_states()
         try:
             draft = app.draft_settings()
             dirty = draft.to_dict() != app.settings.to_dict()
@@ -402,10 +450,13 @@ class FollowspotView:
         self.editing_state.set('Output is running. Settings are available to read; stop output to edit.' if active else
                                'Save settings to apply changes. Start and stopped Reset also save and apply them.')
         s = app.settings
-        self.summary.set(f'{s.device_name or "No saved joystick"}  ·  MArker {s.marker_id}  ·  OSC {s.host}:{s.port}' +
+        pan_tilt = s.control_mode == 'pan_tilt'
+        target = f'Group {s.fixture_group} pan/tilt' if pan_tilt else f'MArker {s.marker_id}'
+        self.summary.set(f'{s.device_name or "No saved joystick"}  ·  {target}  ·  OSC {s.host}:{s.port}' +
                          (f' /{s.prefix}' if s.prefix else '') +
                          (f'  ·  PSN tracker {s.psn_tracker_id} → {s.psn_group}:{s.psn_port} via {s.psn_interface}'
-                          if s.position_output == 'psn' else ''))
+                          if not pan_tilt and s.position_output == 'psn' else ''))
+        self.stage_title.set('Pan / tilt' if pan_tilt else 'Tracked target · top view')
         reason = ''
         if active:
             reason = 'OSC sent · reception unconfirmed' + (' · joystick ignored during test' if app.controller.test else '')
@@ -438,7 +489,7 @@ class FollowspotView:
         app.test_button.configure(state='disabled' if active or app.learning or pending or draft is None else 'normal')
         app.save_button.configure(state='disabled' if active else 'normal')
         app.reset_button.configure(state='disabled' if active and s.reset_locked else 'normal')
-        if s.position_output == 'psn' or app.streamer is not None:
+        if (s.control_mode == 'marker' and s.position_output == 'psn') or app.streamer is not None:
             if not app.release_button.winfo_manager():
                 app.release_button.pack(side='left', padx=(16, 0))
         else:
@@ -478,9 +529,38 @@ class FollowspotView:
         self.release_ack.configure(state='normal' if 'release' in app.faults else 'disabled')
         self.draw_stage()
 
+    def inapplicable_widgets(self):
+        """Editors that belong to the other control mode, from the draft selector (not the parsed draft)."""
+        mode = self.app.values['control_mode'].get()
+        keys = PAN_TILT_FIELDS if mode == 'marker' else MARKER_FIELDS if mode == 'pan_tilt' else ()
+        return {self.fields[key] for key in keys if key in self.fields}
+
+    def apply_field_states(self):
+        """Disabled = output running, the field belongs to the other control mode, or a local button action is loaded."""
+        running = self.app.controller.active
+        inapplicable = self.inapplicable_widgets()
+        if self.app.button_action.get() != BUTTON_ACTIONS['command']:
+            # Local actions cannot carry MA commands, whatever the run state.
+            inapplicable |= {self.app.press_entry, self.app.release_entry}
+        # update_button_editor also writes these two, so the cache cannot be trusted for them.
+        written_elsewhere = {self.app.press_entry, self.app.release_entry}
+        for widget, base in self.editable:
+            state = 'disabled' if running or widget in inapplicable else base
+            current = str(widget.cget('state')) if widget in written_elsewhere else self.field_states.get(widget)
+            if current != state:
+                widget.configure(state=state)
+                self.field_states[widget] = state
+        index = self.mode_index()
+        for key, texts in AXIS_CAPTIONS.items():
+            if self.caption_texts.get(key) != texts[index]:
+                self.field_captions[key].configure(text=texts[index])
+                self.caption_texts[key] = texts[index]
+
+    def mode_index(self):
+        return 1 if self.app.values['control_mode'].get() == 'pan_tilt' else 0
+
     def set_running(self, running):
-        for widget, state in self.editable:
-            widget.configure(state='disabled' if running else state)
+        # refresh() recomputes every editor's state from controller.active and the draft mode.
         self.app.update_button_editor()
         self.refresh()
 
@@ -511,8 +591,11 @@ class FollowspotView:
                 widget = self.fields[key]
                 widget.focus_set()
                 self.app.root.after_idle(lambda: self.reveal(body, widget))
-            label = self.field_labels.get(key, 'Button mapping')
-            self.app.status.set(f'{label}: {error}')
+            label = AXIS_CAPTIONS[key][self.mode_index()] if key in AXIS_CAPTIONS else self.field_labels.get(key, 'Button mapping')
+            text = f'{label}: {error}'
+            if key and self.fields[key] in self.inapplicable_widgets():
+                text += f' Switch Control to {"pan_tilt" if key in PAN_TILT_FIELDS else "marker"} to correct it.'
+            self.app.status.set(text)
 
     def reveal(self, body, widget):
         canvas = body.scroll_canvas
@@ -552,24 +635,32 @@ class FollowspotView:
 
     def draw_stage(self):
         canvas, s = self.stage, self.app.settings
+        pan_tilt = s.control_mode == 'pan_tilt'
+        if pan_tilt:
+            x_min, x_max, y_min, y_max = s.pan_min, s.pan_max, s.tilt_min, s.tilt_max
+            x_name, y_name, unit = 'Pan', 'Tilt', '%'
+            x, y = self.app.controller.motion.pan_tilt
+        else:
+            x_min, x_max, y_min, y_max = s.x_min, s.x_max, s.y_min, s.y_max
+            x_name, y_name, unit = 'X', 'Y', ' m'
+            x, y, _ = self.app.controller.motion.xyz
         width, height = max(160, canvas.winfo_width()), max(130, canvas.winfo_height())
-        scale = min((width - 90) / (s.x_max - s.x_min), (height - 65) / (s.y_max - s.y_min))
-        stage_width, stage_height = (s.x_max - s.x_min) * scale, (s.y_max - s.y_min) * scale
+        scale = min((width - 90) / (x_max - x_min), (height - 65) / (y_max - y_min))
+        stage_width, stage_height = (x_max - x_min) * scale, (y_max - y_min) * scale
         left, top = (width - stage_width) / 2, (height - stage_height) / 2
         right, bottom = left + stage_width, top + stage_height
         canvas.delete('all')
         color = self.foreground
         canvas.create_rectangle(left, top, right, bottom, outline=color, tags='limits')
-        canvas.create_text((left+right)/2, top-14, text=f'Y {s.y_max:g} m', fill=color)
-        canvas.create_text((left+right)/2, bottom+14, text=f'Y {s.y_min:g} m', fill=color)
-        canvas.create_text(left-8, (top+bottom)/2, text=f'X\n{s.x_min:g} m', anchor='e', fill=color)
-        canvas.create_text(right+8, (top+bottom)/2, text=f'X\n{s.x_max:g} m', anchor='w', fill=color)
-        x, y, _ = self.app.controller.motion.xyz
-        px = left + (clamp(x, s.x_min, s.x_max) - s.x_min) * scale
-        py = bottom - (clamp(y, s.y_min, s.y_max) - s.y_min) * scale
+        canvas.create_text((left+right)/2, top-14, text=f'{y_name} {y_max:g}{unit}', fill=color)
+        canvas.create_text((left+right)/2, bottom+14, text=f'{y_name} {y_min:g}{unit}', fill=color)
+        canvas.create_text(left-8, (top+bottom)/2, text=f'{x_name}\n{x_min:g}{unit}', anchor='e', fill=color)
+        canvas.create_text(right+8, (top+bottom)/2, text=f'{x_name}\n{x_max:g}{unit}', anchor='w', fill=color)
+        px = left + (clamp(x, x_min, x_max) - x_min) * scale
+        py = bottom - (clamp(y, y_min, y_max) - y_min) * scale
         canvas.create_oval(px-5, py-5, px+5, py+5, fill=color, outline=color, tags='target')
-        if self.app.streamer is not None and not self.app.controller.active:
+        if not pan_tilt and self.app.streamer is not None and not self.app.controller.active:
             hx, hy, _ = self.app.streamer.position
-            hpx = left + (clamp(hx, s.x_min, s.x_max) - s.x_min) * scale
-            hpy = bottom - (clamp(hy, s.y_min, s.y_max) - s.y_min) * scale
+            hpx = left + (clamp(hx, x_min, x_max) - x_min) * scale
+            hpy = bottom - (clamp(hy, y_min, y_max) - y_min) * scale
             canvas.create_oval(hpx-8, hpy-8, hpx+8, hpy+8, outline=color, dash=(3, 2), tags='held')

@@ -56,7 +56,7 @@ Attribute "XYZ_X" At Absolute Percent 60
 
 ## Step 6. Store the followspot cue on an executor
 
-1. With the setup from Step 5 still in the programmer, store it as a cue and put it on an executor with a **Master** fader. The example uses Page 1, Executor 201:
+1. With the setup from Step 5 (for pan/tilt control, the group and dimmer from the pan/tilt section below) still in the programmer, store it as a cue and put it on an executor with a **Master** fader. The example uses Page 1, Executor 201:
 
 ```text
 Store Sequence 201 Cue 1
@@ -75,7 +75,7 @@ Check: moving the executor's fader by hand changes the lights' brightness. Grand
 
 ## Step 7. Turn Programmer Time off
 
-Turn **Programmer Time off** so the marker follows the joystick without fade lag. The tool writes marker coordinates to the programmer, and programmer fades would add lag.
+Turn **Programmer Time off** so the marker (or, in pan/tilt control, the pan and tilt) follows the joystick without fade lag. The tool writes marker coordinates or pan/tilt values to the programmer, and programmer fades would add lag.
 
 In the master controls menu, tap **Prog Time** until its green marker disappears (or press Off on an executor assigned to the Program Time master). This is from MA's [Time Control help](https://help.malighting.com/grandMA3/2.2/HTML/masters_grand_time.html) for 2.2; check the 2.5 wording on your console.
 
@@ -100,7 +100,7 @@ In the master controls menu, tap **Prog Time** until its green marker disappears
 
 Check in Terminal: `lsof -nP -iUDP:8000` should show onPC listening.
 
-To keep the console selection free, use PSN position output: see [PSN.md](PSN.md). Brightness, zoom / iris and buttons still need this OSC setup.
+In marker control mode, to keep the console selection free, use PSN position output: see [PSN.md](PSN.md). Pan/tilt control cannot use it (see the pan/tilt section below). Brightness, zoom / iris and buttons still need this OSC setup.
 
 ## Step 9. Enter the values in the tool
 
@@ -126,6 +126,7 @@ If nothing moves:
 3. If the commands appear but are rejected, read the error text in System Monitor. The tool sends `ClearSelection; MArker 1; Attribute "XYZ_X" At Absolute Percent 50; ...`.
 4. If the commands are accepted but the beams do not move, recheck Steps 2, 3 and 5.
 5. If the marker moves but the fader does not, recheck Step 6 (Master fader, **FaderRange = 100**, correct executor page and number).
+6. In pan/tilt control (see the pan/tilt section below), the test sends `Group <n>; Attribute "Pan" ...` instead of a MArker. If nothing moves, check that the group number exists (System Monitor may report a missing group; this has not been observed), that the `Pan` and `Tilt` attribute names match `List Attribute`, and that the fixtures in the group actually have pan and tilt. Items 1-3 and 5 apply unchanged.
 
 ## Step 11. Connect the joystick
 
@@ -147,6 +148,28 @@ Do this after the brightness executor works. The tool controls only a fader leve
 6. In the tool open **Setup → Brightness / zoom**, enable the axis, enter the executor page and number, then learn and calibrate the axis (see [OPERATING.md](OPERATING.md#optional-zoom--iris-control)).
 
 Check: a figure-8 test with the axis enabled sends the initial zoom/iris level once but does not move it, because the joystick is ignored in a test. Confirm zoom/iris movement with the joystick.
+
+## Optional: pan/tilt control
+
+Use this instead of Steps 2-5 when you want the stick to drive pan and tilt directly rather than a MArker. Do Step 1, then the steps below in place of Steps 2-5, then Steps 6, 7 and 8 as written, then the pan/tilt settings in this section instead of the MArker fields of Step 9. Pan/tilt control is OSC only: it ignores the PSN settings, so Step 8's advice to use PSN to keep the console selection free does not apply, and every update selects the group (see the command below).
+
+1. Make a group that contains exactly the fixtures to move, and note its number (for example Group 1). All fixtures in the group receive the same pan and tilt percentage.
+2. Run `List Attribute` and confirm the pan and tilt attribute names in your fixture library (normally `Pan` and `Tilt`).
+3. Select the group and set the dimmer, with no MArker or XYZ lines (Step 6 stores exactly this):
+
+```text
+Group 1
+At 100
+```
+
+   Replace `Group 1` with your group. Leave this in the programmer and continue with Step 6 (store the cue on a Master executor), Step 7 (Programmer Time off) and Step 8 (OSC input). Then come back here.
+4. In the tool, open **Setup → Target / stage**, set **Control** to `pan_tilt`, and enter the **Fixture group**, the attribute names, the pan/tilt limits and the initial pan / tilt. Also fill the brightness executor on **Brightness / zoom** (Step 9) and the OSC host / port. Click **Save settings**.
+5. Run the figure 8 test (Step 10). In pan/tilt mode the lights should swing in a small figure 8 around the initial pan / tilt, within the limits.
+6. Connect the joystick (Step 11). Pushing the stick right should increase pan and pushing it forward should increase tilt; tick **Invert** beside an axis if a direction is wrong.
+
+Each update sends `ClearSelection; Group <n>; Attribute "Pan" At Absolute Percent <p>; Attribute "Tilt" At Absolute Percent <t>`. The installed MA 2.5 files support the pieces: `resource/attribute_definitions.xml` defines `Pan` and `Tilt` with a physical (degree) readout, which is why the command uses `At Absolute Percent`; the system tests use `Attribute 'Pan' At Relative Percent 10` and select a group by name followed by a semicolon. That OSC accepts this exact string and moves the lights is **not yet confirmed**.
+
+Check on a test show, and tell the maintainers what you see: the lights move; 0-100% covers the fixture's full pan/tilt range; the default tilt direction; what happens to fixtures that were following a MArker when you switch to pan/tilt; what happens when you switch back from pan/tilt to marker (pan/tilt values left in the programmer might override the stored XYZ-MArker playback; this is an inference and has not been observed); and whether the encoder wheels really are unusable while output runs.
 
 ## References
 

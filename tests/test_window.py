@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 import followspot
-from followspot_core import ButtonEdges, Controller, Settings
+from followspot_core import BUTTON_ACTIONS, ButtonEdges, Controller, Settings, pan_tilt_commands
 
 
 class Value:
@@ -614,6 +614,20 @@ class PsnWindowTests(unittest.TestCase):
         self.assertTrue(app.apply_settings())
         self.assertEqual(app.settings.psn_port, 56570)
 
+    def test_psn_guard_error_names_only_the_changed_fields(self):
+        app, _ = self.app(position_output='psn')
+        shown = []
+        app.view.show_error = shown.append
+        app.start_output()
+        app.stop_output()
+        app.values['psn_port'].set('56570')
+        self.assertFalse(app.apply_settings())
+        self.assertEqual(shown[-1].fields, ('psn_port',))
+        app.values['psn_port'].set('56565')
+        app.values['control_mode'].set('pan_tilt')
+        self.assertFalse(app.apply_settings())
+        self.assertEqual(shown[-1].fields, ('control_mode',))
+
     def test_joystick_loss_holds_the_stream_and_says_so(self):
         app, _ = self.app(position_output='psn')
         app.start_output()
@@ -753,6 +767,100 @@ class PsnWindowTests(unittest.TestCase):
         self.assertTrue(self.streamers[0].closed)
 
 
+class PanTiltWindowTests(unittest.TestCase):
+    app = WindowTests.app
+
+    def last_cmd(self, messages):
+        return [value for address, value in messages if address == '/cmd'][-1]
+
+    def test_pan_tilt_mode_opens_no_stream_even_with_psn_saved(self):
+        app, messages = self.app(control_mode='pan_tilt', position_output='psn')
+        app.start_output()
+        self.assertTrue(app.controller.active)
+        self.assertEqual(self.streamers, [])
+        self.assertIsNone(app.streamer)
+        self.assertTrue(self.last_cmd(messages).startswith('ClearSelection; Group 1;'))
+
+    def test_control_mode_cannot_change_while_a_stream_is_open(self):
+        app, _ = self.app(position_output='psn')
+        app.start_output()
+        app.stop_output()
+        app.values['control_mode'].set('pan_tilt')
+        self.assertFalse(app.apply_settings())
+        self.assertEqual(app.settings.control_mode, 'marker')
+        self.assertIn('control mode', app.faults['settings'])
+        app.release_marker()
+        self.assertTrue(app.apply_settings())
+        self.assertEqual(app.settings.control_mode, 'pan_tilt')
+
+    def test_apply_carries_and_clamps_both_states_across_a_mode_switch(self):
+        app, _ = self.app(control_mode='pan_tilt')
+        app.controller.motion.pan_tilt = [80.0, 20.0]
+        app.controller.motion.xyz = [3.0, 4.0, 1.5]
+        app.values['pan_max'].set('60')
+        app.values['tilt_min'].set('30')
+        self.assertTrue(app.apply_settings())
+        self.assertEqual(app.controller.motion.pan_tilt, [60.0, 30.0])
+        self.assertEqual(app.controller.motion.xyz, [3.0, 4.0, 1.5])
+        app.values['control_mode'].set('marker')
+        self.assertTrue(app.apply_settings())
+        self.assertEqual(app.controller.motion.pan_tilt, [60.0, 30.0])
+        self.assertEqual(app.controller.motion.xyz, [3.0, 4.0, 1.5])
+
+    def test_stop_and_restart_resends_the_displayed_pan_tilt(self):
+        app, messages = self.app(control_mode='pan_tilt')
+        app.start_output()
+        app.controller.tick([1.0, 0, -1], 0.2)
+        app.stop_output()
+        app.apply_settings()
+        app.start_output()
+        expected = '; '.join(pan_tilt_commands(app.settings, app.controller.motion.pan_tilt))
+        self.assertEqual(self.last_cmd(messages), expected)
+        self.assertIn('Percent 55.000000', expected)
+
+    def test_position_text_shows_pan_and_tilt_percent(self):
+        app, _ = self.app(control_mode='pan_tilt')
+        app.update_position()
+        self.assertEqual(app.position_label.get(), 'Pan 50.0%   Tilt 50.0%')
+
+    def test_reset_returns_to_the_initial_pan_tilt(self):
+        app, _ = self.app(control_mode='pan_tilt', initial_pan=30.0, initial_tilt=70.0)
+        app.controller.motion.pan_tilt = [10.0, 10.0]
+        self.assertTrue(app.reset_target())
+        self.assertEqual(app.controller.motion.pan_tilt, [30.0, 70.0])
+        self.assertIn('Pan 30.0%', app.position_label.get())
+
+    def test_test_mode_traces_pan_and_tilt(self):
+        app, messages = self.app(control_mode='pan_tilt')
+        app.start_output(test=True)
+        self.assertIn('pan and tilt', app.status.get())
+        app.controller.tick((), 0.5)
+        self.assertGreater(app.controller.motion.pan_tilt[0], 50.0)
+        self.assertEqual(len([m for m in messages if m[0] == '/cmd']), 2)
+
+    def test_mapped_release_marker_is_a_no_op_in_pan_tilt(self):
+        app, messages = self.app(control_mode='pan_tilt',
+                                 buttons={'0': {'action': 'release_marker'}, '1': {'press': 'Down', 'release': 'Up'}})
+        app.start_output()
+        app.buttons = [False, True, False]
+        app.process_input(0.033)
+        self.assertEqual(messages[-1], ('/cmd', 'Down'))
+        app.buttons = [True, False, False]
+        app.process_input(0.033)
+        self.assertTrue(app.controller.active)
+        self.assertEqual(messages[-1], ('/cmd', 'Up'))
+        self.assertFalse(app.release_marker())
+
+    def test_learn_prompt_names_pan_and_tilt_for_the_draft_mode(self):
+        app, _ = self.app()
+        app.begin_learn('axis_x')
+        self.assertIn('left / right control', app.status.get())
+        app.learning = None
+        app.values['control_mode'].set('pan_tilt')
+        app.begin_learn('axis_y')
+        self.assertIn('tilt control', app.status.get())
+
+
 class FakeJoystick:
     def __init__(self):
         self.handle = None
@@ -885,6 +993,117 @@ with tempfile.TemporaryDirectory() as folder:
         self.assertEqual(str(app.stop_button['state']), 'normal')
         app.stop_output()
         self.assertEqual(str(app.view.fields['host']['state']), 'normal')
+
+    def test_control_mode_disables_the_other_modes_fields_and_stop_keeps_them_disabled(self):
+        app = self.open_app()
+        state = lambda key: str(app.view.fields[key]['state'])
+        self.assertEqual(state('marker_id'), 'normal')
+        self.assertEqual(state('position_output'), 'readonly')
+        self.assertEqual(state('pan_min'), 'disabled')
+        self.assertEqual(state('control_mode'), 'readonly')
+        app.values['control_mode'].set('pan_tilt')
+        self.assertEqual(state('marker_id'), 'disabled')
+        self.assertEqual(state('max_speed'), 'disabled')
+        self.assertEqual(state('test_size'), 'disabled')
+        self.assertEqual(state('position_output'), 'disabled')
+        self.assertEqual(state('pan_min'), 'normal')
+        self.assertEqual(state('test_pan_tilt_size'), 'normal')
+        self.assertEqual(state('host'), 'normal')
+        app.start_output()
+        self.assertEqual(state('pan_min'), 'disabled')
+        app.stop_output()
+        self.assertEqual(state('marker_id'), 'disabled')
+        self.assertEqual(state('pan_min'), 'normal')
+        self.assertEqual(state('host'), 'normal')
+
+    def test_local_action_keeps_command_fields_disabled_across_start_and_stop(self):
+        app = self.open_app(buttons={'0': {'action': 'reset'}})
+        app.button_table.selection_set('0')
+        app.load_button()
+        state = lambda widget: str(widget['state'])
+        self.assertEqual(state(app.press_entry), 'disabled')
+        app.start_output()
+        self.assertEqual(state(app.press_entry), 'disabled')
+        app.stop_output()
+        self.assertEqual(state(app.press_entry), 'disabled')
+        self.assertEqual(state(app.release_entry), 'disabled')
+        app.button_action.set(BUTTON_ACTIONS['command'])
+        app.update_button_editor()
+        self.assertEqual(state(app.press_entry), 'normal')
+        app.start_output()
+        app.stop_output()
+        self.assertEqual(state(app.press_entry), 'normal')
+        app.button_action.set(BUTTON_ACTIONS['reset'])
+        app.update_button_editor()
+        self.assertEqual(state(app.press_entry), 'disabled')
+
+    def test_axis_captions_follow_the_draft_control_mode(self):
+        app = self.open_app()
+        caption = app.view.field_captions['axis_x']
+        self.assertEqual(str(caption.cget('text')), 'Left / right axis')
+        app.values['control_mode'].set('pan_tilt')
+        self.assertEqual(str(caption.cget('text')), 'Pan (left / right) axis')
+        app.values['control_mode'].set('marker')
+        self.assertEqual(str(caption.cget('text')), 'Left / right axis')
+
+    def test_error_in_a_disabled_field_says_how_to_reach_it(self):
+        app = self.open_app()
+        app.values['control_mode'].set('pan_tilt')
+        app.values['marker_id'].set('0')
+        self.assertFalse(app.apply_settings())
+        self.assertIn('Switch Control to marker', app.status.get())
+        app.values['marker_id'].set('1')
+        app.values['pan_min'].set('-5')
+        self.assertFalse(app.apply_settings())
+        self.assertNotIn('Switch Control', app.status.get())
+        app.values['control_mode'].set('marker')
+        self.assertFalse(app.apply_settings())
+        self.assertIn('Switch Control to pan_tilt', app.status.get())
+
+    def test_axis_error_label_follows_the_draft_control_mode(self):
+        app = self.open_app()
+        app.values['axis_x'].set('abc')
+        self.assertFalse(app.apply_settings())
+        self.assertIn('Left / right axis:', app.status.get())
+        app.values['control_mode'].set('pan_tilt')
+        self.assertFalse(app.apply_settings())
+        self.assertIn('Pan (left / right) axis:', app.status.get())
+
+    def test_pan_tilt_summary_has_no_psn_and_the_release_button_is_hidden(self):
+        app = self.open_app(control_mode='pan_tilt', position_output='psn')
+        app.view.refresh()
+        self.assertIn('Group 1', app.view.summary.get())
+        self.assertNotIn('PSN', app.view.summary.get())
+        self.assertNotIn('MArker', app.view.summary.get())
+        self.assertFalse(app.release_button.winfo_manager())
+
+    def test_marker_summary_and_release_button_are_unchanged(self):
+        app = self.open_app(position_output='psn')
+        app.view.refresh()
+        self.assertIn('MArker 1', app.view.summary.get())
+        self.assertIn('PSN', app.view.summary.get())
+        self.assertTrue(app.release_button.winfo_manager())
+
+    def test_live_view_draws_a_pan_tilt_square(self):
+        app = self.open_app(control_mode='pan_tilt', pan_min=10.0, pan_max=90.0)
+        app.update_position()
+        self.assertEqual(app.position_label.get(), 'Pan 50.0%   Tilt 50.0%')
+        self.assertEqual(app.view.stage_title.get(), 'Pan / tilt')
+        canvas = app.view.stage
+        texts = [canvas.itemcget(item, 'text') for item in canvas.find_all() if canvas.type(item) == 'text']
+        self.assertIn('Tilt 100%', texts)
+        self.assertIn('Pan\n10%', texts)
+        self.assertTrue(canvas.find_withtag('target'))
+        self.assertFalse(canvas.find_withtag('held'))
+
+    def test_marker_live_view_keeps_its_title_and_labels(self):
+        app = self.open_app()
+        app.update_position()
+        self.assertEqual(app.view.stage_title.get(), 'Tracked target · top view')
+        canvas = app.view.stage
+        texts = [canvas.itemcget(item, 'text') for item in canvas.find_all() if canvas.type(item) == 'text']
+        self.assertIn('Y 10 m', texts)
+        self.assertIn('X\n-10 m', texts)
 
     def test_readiness_disables_start_without_blocking_joystick_free_test(self):
         app = self.open_app()

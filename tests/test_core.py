@@ -499,5 +499,196 @@ class PsnControllerTests(unittest.TestCase):
         self.assertTrue(sent[0][1].startswith('ClearSelection; MArker 1;'))
 
 
+class PanTiltSettingsTests(unittest.TestCase):
+    def test_old_settings_default_to_marker_control(self):
+        s = core.Settings.from_dict({'port': 8001})
+        self.assertEqual((s.control_mode, s.fixture_group, s.attribute_pan, s.attribute_tilt),
+                         ('marker', 1, 'Pan', 'Tilt'))
+        self.assertEqual((s.pan_tilt_speed, s.pan_min, s.pan_max, s.tilt_min, s.tilt_max),
+                         (25.0, 0.0, 100.0, 0.0, 100.0))
+        self.assertEqual((s.initial_pan, s.initial_tilt, s.test_pan_tilt_size), (50.0, 50.0, 10.0))
+
+    def test_invalid_pan_tilt_values_name_their_field(self):
+        cases = (({'control_mode': 'zoom'}, 'control_mode'),
+                 ({'fixture_group': 0}, 'fixture_group'),
+                 ({'fixture_group': 1.5}, 'fixture_group'),
+                 ({'attribute_pan': 'Pan Tilt'}, 'attribute_pan'),
+                 ({'attribute_tilt': ''}, 'attribute_tilt'),
+                 ({'pan_tilt_speed': 0}, 'pan_tilt_speed'),
+                 ({'pan_tilt_speed': 1001}, 'pan_tilt_speed'),
+                 ({'pan_min': -1}, 'pan_min'),
+                 ({'pan_max': 101}, 'pan_max'),
+                 ({'pan_min': 60, 'pan_max': 60}, 'pan_min'),
+                 ({'pan_min': 60}, 'initial_pan'),
+                 ({'tilt_max': 40}, 'initial_tilt'),
+                 ({'test_pan_tilt_size': 0}, 'test_pan_tilt_size'),
+                 ({'test_pan_tilt_size': 51}, 'test_pan_tilt_size'))
+        for changes, field in cases:
+            with self.subTest(changes=changes):
+                with self.assertRaises(core.SettingsError) as caught:
+                    core.Settings.from_dict(dict(core.Settings().to_dict(), **changes))
+                self.assertIn(field, caught.exception.fields)
+
+    def test_pan_tilt_values_are_validated_even_in_marker_mode(self):
+        with self.assertRaises(core.SettingsError):
+            core.Settings.from_dict(dict(core.Settings().to_dict(), control_mode='marker', pan_min=60))
+
+    def test_pan_tilt_settings_roundtrip(self):
+        s = core.Settings.from_dict(dict(core.Settings().to_dict(), control_mode='pan_tilt', fixture_group=4,
+                                         attribute_pan='Pan2', pan_min=10, pan_max=90, initial_pan=20))
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'settings.json'
+            s.save(path)
+            self.assertEqual(core.Settings.load(path).to_dict(), s.to_dict())
+
+    def test_control_mode_is_guarded_while_a_psn_stream_is_held(self):
+        self.assertIn('control_mode', core.PSN_FIELDS)
+
+
+class PanTiltTests(unittest.TestCase):
+    CENTRED = [0, 0, -1]
+    HOME = ('ClearSelection; Group 1; Attribute "Pan" At Absolute Percent 50.000000; '
+            'Attribute "Tilt" At Absolute Percent 50.000000')
+
+    def settings(self, **changes):
+        return core.Settings.from_dict(dict(core.Settings().to_dict(), control_mode='pan_tilt', **changes))
+
+    def controller(self, **changes):
+        sent = []
+        return core.Controller(self.settings(**changes), lambda a, v: sent.append((a, v))), sent
+
+    def commands(self, sent):
+        return [v for a, v in sent if a == '/cmd']
+
+    def test_deflection_sets_pan_tilt_speed_and_centre_holds(self):
+        m = core.Motion(self.settings())
+        m.step([1, 0, -1], 0.2)
+        self.assertAlmostEqual(m.pan_tilt[0], 55)
+        self.assertAlmostEqual(m.pan_tilt[1], 50)
+        m.step([0.55, 0, -1], 0.2)
+        self.assertAlmostEqual(m.pan_tilt[0], 57.5)
+        m.step([0.05, 0, -1], 0.2)
+        self.assertAlmostEqual(m.pan_tilt[0], 57.5)
+        m.step([0, -1, -1], 0.2)
+        self.assertAlmostEqual(m.pan_tilt[1], 55)
+
+    def test_inversion_limits_clamp_and_capped_gap(self):
+        m = core.Motion(self.settings(invert_x=True))
+        m.step([1, 0, -1], 0.2)
+        self.assertAlmostEqual(m.pan_tilt[0], 45)
+        m = core.Motion(self.settings(pan_max=60, tilt_min=40))
+        m.step([1, 0, -1], 10)
+        self.assertAlmostEqual(m.pan_tilt[0], 56.25)
+        for _ in range(20):
+            m.step([1, 0, -1], 0.25)
+            m.step([0, 1, -1], 0.25)
+        self.assertEqual(m.pan_tilt, [60, 40])
+
+    def test_diagonal_speed_is_capped(self):
+        m = core.Motion(self.settings())
+        m.step([1, -1, -1], 0.2)
+        self.assertAlmostEqual(math.hypot(m.pan_tilt[0] - 50, m.pan_tilt[1] - 50), 5.0)
+
+    def test_each_mode_leaves_the_other_modes_state_alone(self):
+        m = core.Motion(self.settings())
+        m.step([1, 0, -1], 0.2)
+        self.assertEqual(m.xyz, [0.0, 0.0, 1.5])
+        m = core.Motion(core.Settings())
+        m.step([1, 0, -1], 0.2)
+        self.assertEqual(m.pan_tilt, [50.0, 50.0])
+
+    def test_pan_tilt_commands_select_the_group_then_set_percent(self):
+        s = self.settings(fixture_group=7)
+        self.assertEqual(core.pan_tilt_commands(s, [50, 25.5]),
+                         ['ClearSelection', 'Group 7',
+                          'Attribute "Pan" At Absolute Percent 50.000000',
+                          'Attribute "Tilt" At Absolute Percent 25.500000'])
+
+    def test_pan_tilt_commands_use_attribute_names_and_never_clear_all(self):
+        commands = core.pan_tilt_commands(self.settings(attribute_pan='Pan2', attribute_tilt='Tilt2'), [0, 100])
+        self.assertIn('Attribute "Pan2" At Absolute Percent 0.000000', commands)
+        self.assertIn('Attribute "Tilt2" At Absolute Percent 100.000000', commands)
+        self.assertNotIn('ClearAll', ' '.join(commands))
+
+    def test_start_sends_one_group_command_and_suppresses_idle_resends(self):
+        c, sent = self.controller()
+        c.start(self.CENTRED)
+        self.assertEqual(self.commands(sent), [self.HOME])
+        c.tick(self.CENTRED, 0.033)
+        c.tick(self.CENTRED, 0.033)
+        self.assertEqual(len(self.commands(sent)), 1)
+        c.tick([1, 0, -1], 0.1)
+        self.assertEqual(len(self.commands(sent)), 2)
+        self.assertIn('Percent 52.500000', self.commands(sent)[-1])
+
+    def test_needs_no_position_callback_even_when_psn_is_saved(self):
+        c, sent = self.controller(position_output='psn')
+        c.start(self.CENTRED)
+        self.assertEqual(self.commands(sent), [self.HOME])
+
+    def test_stop_then_start_resends_the_displayed_pan_tilt(self):
+        c, sent = self.controller()
+        c.start(self.CENTRED)
+        c.tick([1, 0, -1], 0.2)
+        c.stop()
+        c.start(self.CENTRED)
+        self.assertEqual(self.commands(sent)[-1], '; '.join(core.pan_tilt_commands(c.settings, c.motion.pan_tilt)))
+        self.assertIn('Percent 55.000000', self.commands(sent)[-1])
+
+    def test_unlocked_live_reset_resends_home_pan_tilt_and_zoom(self):
+        c, sent = self.controller(reset_locked=False, zoom_enabled=True, initial_pan=30, initial_tilt=70)
+        c.start([0, 0, -1, 0])
+        before = len(self.commands(sent))
+        self.assertTrue(c.reset_target())
+        self.assertEqual(len(self.commands(sent)), before + 1)
+        c.tick([1, 0, -1, 0], 0.2)
+        c.motion.zoom_level = 80
+        self.assertTrue(c.reset_target())
+        self.assertEqual(c.motion.pan_tilt, [30, 70])
+        self.assertIn('Percent 30.000000', self.commands(sent)[-1])
+        self.assertIn('Percent 70.000000', self.commands(sent)[-1])
+        # Sent at start, then again by each of the two forced Reset resends.
+        self.assertEqual(sent.count(('/Page1/Fader202', 50.0)), 3)
+
+    def test_locked_live_reset_is_refused_and_stopped_reset_is_local(self):
+        c, sent = self.controller()
+        c.start(self.CENTRED)
+        c.tick([1, 0, -1], 0.2)
+        self.assertFalse(c.reset_target())
+        self.assertAlmostEqual(c.motion.pan_tilt[0], 55)
+        c.stop()
+        sent.clear()
+        self.assertTrue(c.reset_target())
+        self.assertEqual(c.motion.pan_tilt, [50.0, 50.0])
+        self.assertEqual(sent, [])
+
+    def test_reset_leaves_the_marker_position_alone(self):
+        c, _ = self.controller()
+        c.motion.xyz = [3.0, 4.0, 1.5]
+        c.reset_target()
+        self.assertEqual(c.motion.xyz, [3.0, 4.0, 1.5])
+
+    def test_figure_eight_needs_no_joystick_and_stays_inside_limits(self):
+        c, sent = self.controller(pan_min=45, pan_max=55, tilt_min=48, tilt_max=52, test_brightness=40)
+        c.start(test=True)
+        self.assertEqual(c.motion.pan_tilt, [50.0, 50.0])
+        pans, tilts = [], []
+        for _ in range(100):
+            c.tick((), 0.25)
+            pans.append(c.motion.pan_tilt[0])
+            tilts.append(c.motion.pan_tilt[1])
+        self.assertEqual((min(pans), max(pans)), (45, 55))
+        self.assertEqual((min(tilts), max(tilts)), (48, 52))
+        self.assertIn(('/Page1/Fader201', 40.0), sent)
+
+    def test_send_failure_stops_output(self):
+        def fail(address, value):
+            raise OSError('send failed')
+        c = core.Controller(self.settings(), fail)
+        with self.assertRaises(OSError):
+            c.start(self.CENTRED)
+        self.assertFalse(c.active)
+
+
 if __name__ == '__main__':
     unittest.main()
