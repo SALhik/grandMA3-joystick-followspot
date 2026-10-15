@@ -222,7 +222,8 @@ PSN position output was implemented on 2026-10-14 (branch `feat/psn-output`) and
 is covered by automated tests only. It is not verified with the real joystick,
 a real show, onPC receiving the app's own stream, onPC on another computer or
 Windows, and the Live view and Setup layout were not checked visually; see
-docs/PSN.md.
+docs/PSN.md, section Remaining work, for the operator checklist, the open
+Release marker confirmation decision and the known minor issues.
 
 Added since then: proportional zoom/iris axis, the figure-8 test mode with the
 step-by-step setup guide, and the Windows launcher. None has operator

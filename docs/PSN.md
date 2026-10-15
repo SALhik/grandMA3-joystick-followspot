@@ -103,3 +103,36 @@ The app's encoder produces the same bytes as the verified `tools/psn_test_sender
 - macOS App Nap or background throttling could delay the sender thread beyond that timeout; the thread is not proven immune. Keep the Live view in front during shows.
 - Whether PSN wants separate frame counters for INFO and DATA (the app and the test sender share one), and whether onPC applies its Map or offset to the received metres, were not checked.
 - Absolute-metre positions were checked at a few points only; the Movement Space bounds may still matter at extremes.
+
+## Remaining work
+
+PSN output is implemented and covered by automated tests only (130 tests on a Tk-capable Python). Nothing below has operator evidence yet.
+
+### Operator checks (test show, not yet done)
+
+1. With onPC set up as above and **Position output** = `psn`, run the figure-8 test. The MArker traces a figure 8 while the console selection and the encoder wheels stay untouched.
+2. Press Stop, then Release marker. The MArker holds after Stop and drops to 0, 0, 0 after Release marker.
+3. Run with the real joystick and confirm OSC brightness, zoom/iris and mapped buttons still work while position goes over PSN.
+4. Pull the joystick cable. Output stops, the MArker holds, and the fault mentions Release marker.
+5. Close the window while a stream is held. A confirmation dialog appears. On macOS, repeat with Cmd-Q.
+6. Look at the Setup **OSC** tab (Position output and the four PSN fields) and the Live view (Release marker button, dashed "Held" marker, "Held at" line). Screenshots taken during development were black, so the layout has not been seen.
+7. Leave the stick idle for several minutes in PSN mode and confirm the MArker does not snap back (App Nap and sender-thread timing, see Open risks).
+
+### Unverified environments
+
+- onPC receiving the app's own stream (only `tools/psn_test_sender.py` was seen working).
+- Script and onPC on different computers (the section above is untested).
+- Windows.
+
+### Open decision
+
+- **Release marker confirmation.** The Live button acts immediately, even while output runs, because the spec enables it whenever a stream is open. An accidental click drops the spot to 0, 0, 0. Options: add a confirmation only when the button is clicked while output is running (the final reviewer's recommendation), or keep it immediate.
+
+### Known minor issues (not fixed)
+
+- Cmd-Q during a failed-settings error dialog only prints a traceback.
+- Cmd-Q while the close confirmation is open might open a second dialog (speculative, not reproduced).
+- A Release marker press with no stream open replaces the status text.
+- `docs/OPERATING.md` points here for the PSN defaults, but this guide does not state that `osc` is the default `position_output`.
+- No test covers Release-button visibility in OSC versus PSN mode or field-error navigation to a PSN field.
+- `psn_group` accepts 224.0.0.0 (any multicast address), unchanged by design.
