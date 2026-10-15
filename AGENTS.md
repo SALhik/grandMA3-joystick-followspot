@@ -171,7 +171,9 @@ failures; never report skipped or blocked hardware checks as passing.
   MArker **Target Space**. Defaults are examples, not measured stage geometry.
 - MA receives a single OSC message, not an OSC bundle. OSC position output uses
   `/cmd` (PSN mode streams the position instead) with an OSC string containing semicolon-separated commands. Clear only the
-  selection, select the configured MArker, then set its attributes:
+  selection, select the configured MArker, then set its attributes (in `pan_tilt`
+  control mode the selected object is the fixture group and the attributes are
+  Pan/Tilt; see the Control mode bullet):
 
   ```text
   ClearSelection; MArker 1; Attribute "XYZ_X" At Absolute Percent 50; Attribute "XYZ_Y" At Absolute Percent 50; Attribute "XYZ_Z" At Absolute Percent 50.75
@@ -263,7 +265,8 @@ input/disconnect, native HID discovery and combined-list tests with doubles,
 PSN encoder (pinned bytes), streamer (injected sockets; one real socket open, no packet is
 received by a real listener) and controller tests, headless window lifecycle tests (including
 zoom/iris, test mode and PSN stream hold/release/close, faults and button priority), real Tk
-workflow tests, and a visible startup test with the real backend. Tk tests skip
+workflow tests, pan/tilt coverage in each layer (core motion, validation and OSC-string tests;
+headless window tests; real Tk tests for the Control selector, greyed fields, captions and error labels), and a visible startup test with the real backend. Tk tests skip
 when Tk is missing or cannot open a window. The
 Windows launcher has no automated coverage. MA's installed 2.5 system tests
 confirm the `XYZ_X`, `XYZ_Y`, `XYZ_Z`, and `XYZ_MArker` attribute names.
