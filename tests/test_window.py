@@ -40,6 +40,27 @@ class Sender:
         self.closed = True
 
 
+class FakeStreamer:
+    def __init__(self, settings, xyz):
+        self.positions = [tuple(xyz)]
+        self.closed = False
+        self.error = None
+
+    @property
+    def position(self):
+        return self.positions[-1]
+
+    def set_position(self, xyz):
+        self.positions.append(tuple(xyz))
+
+    def poll_error(self):
+        error, self.error = self.error, None
+        return error
+
+    def close(self):
+        self.closed = True
+
+
 class WindowTests(unittest.TestCase):
     def app(self, **changes):
         folder = tempfile.TemporaryDirectory()
@@ -54,8 +75,9 @@ class WindowTests(unittest.TestCase):
         app.button_edges = ButtonEdges()
         app.button_edges.seed(app.buttons)
         app.sender = None
+        app.streamer = None
         messages = []
-        app.controller = Controller(app.settings, app.send)
+        app.controller = Controller(app.settings, app.send, app.send_position)
         for name in ('status', 'output_label', 'position_label', 'brightness_label', 'zoom_label',
                      'axes_label', 'buttons_label', 'device_label', 'button_id',
                      'press_command', 'release_command', 'fault_label'):
@@ -84,13 +106,23 @@ class WindowTests(unittest.TestCase):
                                    mapping_pending=lambda: False, editor_loaded=lambda: None,
                                    set_feedback=lambda *args: None, restore_selection=lambda: None)
         app.errors = []
-        app.messagebox = SimpleNamespace(showerror=lambda *args: app.errors.append(args))
+        app.confirm = True
+        app.messagebox = SimpleNamespace(showerror=lambda *args: app.errors.append(args),
+                                         askokcancel=lambda *args: app.confirm)
         def new_sender(*args):
             self.sender = Sender(messages)
             return self.sender
         sender_patch = patch.object(followspot, 'OscSender', side_effect=new_sender)
         sender_patch.start()
         self.addCleanup(sender_patch.stop)
+        self.streamers = []
+        def new_streamer(settings, xyz):
+            streamer = FakeStreamer(settings, xyz)
+            self.streamers.append(streamer)
+            return streamer
+        streamer_patch = patch.object(followspot, 'PsnStreamer', side_effect=new_streamer)
+        streamer_patch.start()
+        self.addCleanup(streamer_patch.stop)
         return app, messages
 
     def test_zoom_level_survives_apply_stop_and_restart(self):
@@ -497,6 +529,230 @@ class WindowTests(unittest.TestCase):
             self.assertEqual(messages, [])
 
 
+class PsnWindowTests(unittest.TestCase):
+    app = WindowTests.app
+
+    def test_psn_mode_sends_no_marker_commands_stop_holds_release_closes(self):
+        app, messages = self.app(position_output='psn')
+        app.start_output()
+        self.assertTrue(app.controller.active)
+        self.assertEqual(len(self.streamers), 1)
+        self.assertFalse([m for m in messages if m[0] == '/cmd'])
+        self.assertTrue([m for m in messages if m[0].startswith('/Page1/Fader')])
+        app.controller.tick([1.0, 0, 0], 0.1)
+        self.assertGreater(self.streamers[0].position[0], 0)
+        app.stop_output()
+        self.assertFalse(app.controller.active)
+        self.assertIs(app.streamer, self.streamers[0])
+        self.assertFalse(self.streamers[0].closed)
+        self.assertIn('Release marker', app.status.get())
+        self.assertTrue(app.release_marker())
+        self.assertTrue(self.streamers[0].closed)
+        self.assertIsNone(app.streamer)
+        self.assertIn('0, 0, 0', app.status.get())
+
+    def test_osc_mode_never_creates_a_streamer(self):
+        app, messages = self.app()
+        app.start_output()
+        self.assertEqual(self.streamers, [])
+        self.assertTrue([m for m in messages if m[0] == '/cmd'])
+        self.assertFalse(app.release_marker())
+        self.assertIn('No PSN stream', app.status.get())
+
+    def test_restart_reuses_the_held_stream(self):
+        app, _ = self.app(position_output='psn')
+        app.start_output()
+        app.stop_output()
+        app.start_output()
+        self.assertEqual(len(self.streamers), 1)
+
+    def test_streamer_error_with_no_joystick_stops_output_and_records_a_fault(self):
+        app, _ = self.app(position_output='psn')
+        app.start_output()
+        app.joystick = None
+        self.streamers[0].error = OSError('network down')
+        app.poll()
+        self.assertFalse(app.controller.active)
+        self.assertIsNone(app.streamer)
+        self.assertTrue(self.streamers[0].closed)
+        self.assertIn('network down', app.faults['psn'])
+
+    def test_held_stream_error_while_stopped_is_reported(self):
+        app, _ = self.app(position_output='psn')
+        app.start_output()
+        app.stop_output()
+        app.joystick = None
+        self.streamers[0].error = OSError('network down')
+        app.poll()
+        self.assertIsNone(app.streamer)
+        self.assertIn('psn', app.faults)
+
+    def test_failed_start_closes_only_a_stream_it_created(self):
+        app, messages = self.app(position_output='psn')
+        failing = Sender(messages)
+        failing.fail = True
+        with patch.object(followspot, 'OscSender', return_value=failing):
+            app.start_output()
+        self.assertFalse(app.controller.active)
+        self.assertIsNone(app.streamer)
+        self.assertTrue(self.streamers[0].closed)
+        app.start_output()
+        app.stop_output()
+        with patch.object(followspot, 'OscSender', return_value=failing):
+            app.start_output()
+        self.assertIsNotNone(app.streamer)
+        self.assertFalse(self.streamers[1].closed)
+
+    def test_psn_settings_cannot_change_while_a_stream_is_open(self):
+        app, _ = self.app(position_output='psn')
+        app.start_output()
+        app.stop_output()
+        app.values['psn_port'].set('56570')
+        self.assertFalse(app.apply_settings())
+        self.assertEqual(app.settings.psn_port, 56565)
+        app.release_marker()
+        self.assertTrue(app.apply_settings())
+        self.assertEqual(app.settings.psn_port, 56570)
+
+    def test_joystick_loss_holds_the_stream_and_says_so(self):
+        app, _ = self.app(position_output='psn')
+        app.start_output()
+        def unplugged():
+            raise OSError('unplugged')
+        app.joystick.read = unplugged
+        app.poll()
+        self.assertFalse(app.controller.active)
+        self.assertIsNotNone(app.streamer)
+        self.assertFalse(self.streamers[0].closed)
+        self.assertIn('Release marker', app.faults['input'])
+
+    def test_release_marker_button_ranks_after_stop_and_before_start(self):
+        app, _ = self.app(position_output='psn',
+                          buttons={'0': {'action': 'release_marker'}, '1': {'action': 'start'}, '2': {'action': 'stop'}})
+        app.start_output()
+        app.stop_output()
+        app.buttons = [True, True, False]
+        app.process_input(0.033)
+        self.assertIsNone(app.streamer)
+        self.assertFalse(app.controller.active)
+        app.start_output()
+        app.buttons = [False, False, False]
+        app.button_edges.seed(app.buttons)
+        app.buttons = [True, False, True]
+        app.process_input(0.033)
+        self.assertFalse(app.controller.active)
+        self.assertIsNone(app.streamer)
+
+    def test_osc_failure_stops_output_but_holds_the_stream(self):
+        app, _ = self.app(position_output='psn')
+        app.start_output()
+        self.sender.fail = True
+        app.axes[2] = 1.0
+        app.poll()
+        self.assertFalse(app.controller.active)
+        self.assertIs(app.streamer, self.streamers[0])
+        self.assertFalse(self.streamers[0].closed)
+
+    def test_release_marker_button_without_a_stream_does_not_skip_the_sample(self):
+        app, messages = self.app(buttons={'0': {'action': 'release_marker'}, '1': {'press': 'Down', 'release': 'Up'}})
+        app.start_output()
+        app.buttons = [False, True, False]
+        app.process_input(0.033)
+        self.assertEqual(messages[-1], ('/cmd', 'Down'))
+        app.buttons = [True, False, False]
+        app.process_input(0.033)
+        self.assertTrue(app.controller.active)
+        self.assertEqual(messages[-1], ('/cmd', 'Up'))
+        self.assertNotIn('stopped', app.status.get().lower())
+
+    def test_close_streamer_forgets_the_stream_even_if_close_raises(self):
+        app, _ = self.app(position_output='psn')
+        app.start_output()
+        app.stop_output()
+        def broken():
+            raise OSError('close failed')
+        self.streamers[0].close = broken
+        with self.assertRaises(OSError):
+            app.close_streamer()
+        self.assertIsNone(app.streamer)
+
+    def test_position_label_shows_the_held_position_while_stopped(self):
+        app, _ = self.app(position_output='psn')
+        app.start_output()
+        app.controller.tick([1.0, 0, 0], 0.1)
+        app.stop_output()
+        self.assertIn('Held at', app.position_label.get())
+        app.release_marker()
+        self.assertNotIn('Held at', app.position_label.get())
+
+    def test_position_label_has_no_held_text_while_running(self):
+        app, _ = self.app(position_output='psn')
+        app.start_output()
+        app.update_position()
+        self.assertNotIn('Held at', app.position_label.get())
+
+    def test_stopped_reset_keeps_showing_the_streamers_held_position(self):
+        app, _ = self.app(position_output='psn')
+        app.start_output()
+        app.controller.tick([1.0, 0, 0], 0.1)
+        app.stop_output()
+        hx, hy, hz = self.streamers[0].position
+        self.assertTrue(app.reset_target())
+        target = app.controller.motion.xyz
+        self.assertNotEqual((hx, hy, hz), tuple(target))
+        lines = app.position_label.get().split('\n')
+        self.assertEqual(lines[0], f'X {target[0]:+.3f} m   Y {target[1]:+.3f} m   Z {target[2]:.3f} m')
+        self.assertEqual(lines[1], f'Held at  X {hx:+.3f} m   Y {hy:+.3f} m   Z {hz:.3f} m')
+        self.assertEqual(self.streamers[0].position, (hx, hy, hz))
+
+    def test_stream_error_fault_persists_in_the_fault_text_until_start(self):
+        app, _ = self.app(position_output='psn')
+        app.start_output()
+        app.stop_output()
+        self.streamers[0].error = OSError('network down')
+        app.poll()
+        self.assertIn('network down', app.fault_label.get())
+        app.poll()
+        self.assertIn('network down', app.fault_label.get())
+        app.start_output()
+        self.assertNotIn('network down', app.fault_label.get())
+
+    def test_first_packet_is_the_displayed_post_clamp_target(self):
+        app, _ = self.app(position_output='psn')
+        app.controller.motion.xyz = [50.0, -2.0, 99.0]
+        app.start_output()
+        self.assertEqual(self.streamers[0].positions[0], (10.0, -2.0, 1.5))
+        self.assertEqual(self.streamers[0].positions[0], tuple(app.controller.motion.xyz))
+
+    def test_restart_with_a_held_stream_resumes_at_the_held_position(self):
+        app, _ = self.app(position_output='psn')
+        app.start_output()
+        app.controller.tick([1.0, 0, 0], 0.1)
+        app.stop_output()
+        held = self.streamers[0].position
+        self.assertNotEqual(held, (0.0, 0.0, 1.5))
+        sent = len(self.streamers[0].positions)
+        app.start_output()
+        self.assertEqual(len(self.streamers), 1)
+        self.assertEqual(self.streamers[0].positions[sent], held)
+        self.assertEqual(self.streamers[0].position, held)
+
+    def test_close_asks_before_dropping_a_held_stream(self):
+        app, _ = self.app(position_output='psn')
+        destroyed = []
+        app.root.destroy = lambda: destroyed.append(True)
+        app.joystick.shutdown = lambda: None
+        app.start_output()
+        app.confirm = False
+        app.close()
+        self.assertEqual(destroyed, [])
+        self.assertTrue(app.controller.active)
+        app.confirm = True
+        app.close()
+        self.assertEqual(destroyed, [True])
+        self.assertTrue(self.streamers[0].closed)
+
+
 class FakeJoystick:
     def __init__(self):
         self.handle = None
@@ -543,6 +799,13 @@ class RealWindowTests(unittest.TestCase):
         self.addCleanup(app.close)
         return app
 
+    def test_macos_quit_command_is_routed_to_the_close_handler(self):
+        # Only checks the command is defined; no Quit event is triggered.
+        app = self.open_app()
+        if app.root.tk.call('tk', 'windowingsystem') != 'aqua':
+            self.skipTest('::tk::mac::Quit exists only on macOS Tk')
+        self.assertTrue(app.root.tk.call('info', 'commands', '::tk::mac::Quit'))
+
     def test_visible_window_with_real_backend_starts_and_polls_without_aborting(self):
         # A child process is necessary: a native Tk/SDL abort kills the interpreter.
         # No output is started and only temporary settings are used.
@@ -581,6 +844,37 @@ with tempfile.TemporaryDirectory() as folder:
         if result.returncode == 77:
             self.skipTest(f'Tk window unavailable: {result.stderr.strip()}')
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_real_window_psn_controls_and_held_marker(self):
+        streamers = []
+        def new_streamer(settings, xyz):
+            streamers.append(FakeStreamer(settings, xyz))
+            return streamers[-1]
+        with patch.object(followspot, 'PsnStreamer', side_effect=new_streamer):
+            app = self.open_app(position_output='psn')
+            self.assertIn('position_output', app.view.fields)
+            for key in ('psn_tracker_id', 'psn_group', 'psn_port', 'psn_interface'):
+                self.assertIn(key, app.view.fields)
+            app.view.refresh()
+            self.assertEqual(str(app.release_button.cget('state')), 'disabled')
+            app.start_output()
+            app.view.refresh()
+            self.assertEqual(str(app.release_button.cget('state')), 'normal')
+            app.stop_output()
+            app.root.update_idletasks()
+            app.view.draw_stage()
+            self.assertTrue(app.view.stage.find_withtag('held'))
+            app.release_button.invoke()
+            self.assertIsNone(app.streamer)
+            app.view.draw_stage()
+            self.assertFalse(app.view.stage.find_withtag('held'))
+            self.assertIn('PSN', app.view.summary.get())
+
+    def test_real_window_release_button_is_hidden_in_osc_mode(self):
+        app = self.open_app()
+        app.view.refresh()
+        self.assertFalse(app.release_button.winfo_manager())
+        self.assertNotIn('PSN', app.view.summary.get())
 
     def test_setup_is_readable_but_cannot_be_edited_while_running(self):
         app = self.open_app()

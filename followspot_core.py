@@ -1,12 +1,15 @@
 """Validated settings, proportional motion and grandMA3 OSC output."""
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, fields
+import ipaddress
 import json
 import math
 from pathlib import Path
 import re
 import socket
 import struct
+import threading
+import time
 from typing import get_type_hints
 
 
@@ -14,7 +17,8 @@ from typing import get_type_hints
 MAX_STEP = 0.25
 BUTTON_ACTIONS = {'command': 'MA command', 'start': 'Start output',
                   'stop': 'Stop output', 'toggle': 'Toggle output',
-                  'reset': 'Reset target'}
+                  'reset': 'Reset target', 'release_marker': 'Release PSN marker'}
+PSN_FIELDS = ('position_output', 'psn_tracker_id', 'psn_group', 'psn_port', 'psn_interface')
 
 
 def clamp(value, low, high):
@@ -76,6 +80,11 @@ class Settings:
     host: str = '127.0.0.1'
     port: int = 8000
     prefix: str = ''
+    position_output: str = 'osc'
+    psn_tracker_id: int = 1
+    psn_group: str = '236.10.10.10'
+    psn_port: int = 56565
+    psn_interface: str = '127.0.0.1'
     buttons: dict = field(default_factory=dict)
 
     def to_dict(self):
@@ -145,6 +154,22 @@ class Settings:
                 raise SettingsError('IDs must be positive.', key)
         if not 1 <= self.port <= 65535:
             raise SettingsError('OSC port must be 1–65535.', 'port')
+        if self.position_output not in ('osc', 'psn'):
+            raise SettingsError('Position output must be osc or psn.', 'position_output')
+        if not 1 <= self.psn_tracker_id <= 65535:
+            raise SettingsError('PSN tracker ID must be 1–65535.', 'psn_tracker_id')
+        if not 1 <= self.psn_port <= 65535:
+            raise SettingsError('PSN port must be 1–65535.', 'psn_port')
+        try:
+            group_is_multicast = ipaddress.IPv4Address(self.psn_group).is_multicast
+        except ValueError:
+            group_is_multicast = False
+        if not group_is_multicast:
+            raise SettingsError('PSN group must be an IPv4 multicast address such as 236.10.10.10.', 'psn_group')
+        try:
+            ipaddress.IPv4Address(self.psn_interface)
+        except ValueError:
+            raise SettingsError('PSN interface must be an IPv4 address of this computer, for example 127.0.0.1.', 'psn_interface') from None
         if not self.host.strip() or any(c.isspace() for c in self.host) or '\0' in self.host:
             raise SettingsError('OSC host must be an IP address or hostname without spaces.', 'host')
         if self.prefix and not re.fullmatch(r'[A-Za-z0-9_.-]+', self.prefix):
@@ -277,6 +302,111 @@ def osc_packet(address, value):
     return osc_string(address) + osc_string(',f') + struct.pack('>f', value)
 
 
+PSN_DATA, PSN_INFO = 0x6755, 0x6756
+
+
+def psn_chunk(chunk_id, payload, has_children=False):
+    """One PSN chunk: header is id | length << 16 | has_children << 31, little-endian."""
+    if len(payload) > 0x7FFF:
+        raise ValueError('PSN chunk payload is too long.')
+    return struct.pack('<I', chunk_id | len(payload) << 16 | int(has_children) << 31) + payload
+
+
+def _psn_header(timestamp_us, frame):
+    # Version 2.0, one packet per frame.
+    return psn_chunk(0x0000, struct.pack('<QBBBB', timestamp_us, 2, 0, frame & 255, 1))
+
+
+def psn_data_packet(tracker_id, xyz, timestamp_us, frame):
+    position = psn_chunk(0x0000, struct.pack('<3f', *xyz))
+    trackers = psn_chunk(0x0001, psn_chunk(tracker_id, position, True), True)
+    return psn_chunk(PSN_DATA, _psn_header(timestamp_us, frame) + trackers, True)
+
+
+def psn_info_packet(system_name, tracker_id, tracker_name, timestamp_us, frame):
+    name = psn_chunk(0x0000, tracker_name.encode('utf-8'))
+    trackers = psn_chunk(0x0002, psn_chunk(tracker_id, name, True), True)
+    return psn_chunk(PSN_INFO, _psn_header(timestamp_us, frame)
+                     + psn_chunk(0x0001, system_name.encode('utf-8')) + trackers, True)
+
+
+PSN_RATE = 30.0
+PSN_SYSTEM_NAME = 'Followspot'
+
+
+class PsnStreamer:
+    """Streams one tracker's latest position as PSN at about 30 Hz.
+
+    A stopped stream makes onPC reset the MArker to 0, 0, 0, so the thread
+    keeps sending even while the joystick is idle. Errors are stored for
+    the window's poll; nothing is raised into the Tk callback.
+    """
+    def __init__(self, settings, xyz, sock=None, clock=time.monotonic, start=True):
+        self.destination = (settings.psn_group, settings.psn_port)
+        self.tracker_id = settings.psn_tracker_id
+        self.clock = clock
+        self.began = clock()
+        self.lock = threading.Lock()
+        self._xyz = tuple(xyz)
+        self._error = None
+        self.frame = 0
+        self.last_info = None
+        self.stopping = threading.Event()
+        self.thread = None
+        if sock is None:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(settings.psn_interface))
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 1)
+            except OSError:
+                sock.close()
+                raise
+        self.socket = sock
+        if start:
+            self.thread = threading.Thread(target=self._run, name='psn-stream', daemon=True)
+            self.thread.start()
+
+    @property
+    def position(self):
+        with self.lock:
+            return self._xyz
+
+    def set_position(self, xyz):
+        with self.lock:
+            self._xyz = tuple(xyz)
+
+    def poll_error(self):
+        with self.lock:
+            error, self._error = self._error, None
+        return error
+
+    def step(self):
+        now = self.clock()
+        timestamp = int((now - self.began) * 1_000_000)
+        if self.last_info is None or now - self.last_info >= 1.0:
+            self.socket.sendto(psn_info_packet(PSN_SYSTEM_NAME, self.tracker_id, PSN_SYSTEM_NAME,
+                                               timestamp, self.frame), self.destination)
+            self.last_info = now
+        self.socket.sendto(psn_data_packet(self.tracker_id, self.position, timestamp, self.frame), self.destination)
+        self.frame += 1
+
+    def _run(self):
+        while not self.stopping.is_set():
+            try:
+                self.step()
+            except Exception as exc:
+                with self.lock:
+                    self._error = exc
+                return
+            self.stopping.wait(1 / PSN_RATE)
+
+    def close(self):
+        self.stopping.set()
+        if self.thread is not None and self.thread is not threading.current_thread():
+            self.thread.join(timeout=1.0)
+        self.socket.close()
+
+
 class OscSender:
     def __init__(self, host, port, prefix=''):
         # Resolve once when starting, not inside the 30 Hz UI callback.
@@ -323,11 +453,14 @@ def local_actions(presses, mappings):
 
 
 class Controller:
-    def __init__(self, settings, send):
+    def __init__(self, settings, send, send_position=None):
         settings.validate()
+        if settings.position_output == 'psn' and send_position is None:
+            raise ValueError('PSN position output needs a position callback.')
         self.settings = settings
         self.motion = Motion(settings)
         self.send = send
+        self.send_position = send_position
         self.active = False
         self.test = False
         self.test_time = 0.0
@@ -362,6 +495,10 @@ class Controller:
             self._output(axes)
 
     def _output_position(self):
+        if self.settings.position_output == 'psn':
+            # The streamer keeps sending; the selection is never touched.
+            self.send_position(tuple(self.motion.xyz))
+            return
         commands = marker_commands(self.settings, self.motion.xyz)
         if commands != self.last_commands:
             # Keep selection and XYZ assignments in one OSC command string.

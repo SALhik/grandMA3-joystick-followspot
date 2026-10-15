@@ -34,17 +34,19 @@ current code and Git state, and preserve unrelated operator changes.
 | --- | --- |
 | `followspot.py` | Tkinter window, settings editor, device selection/learning, polling, start/stop lifecycle, diagnostic CLI |
 | `followspot_ui.py` | Native Live/Setup/Diagnostics views, read-only stage/level previews, draft/readiness feedback, field-error navigation and scroll layout |
-| `followspot_core.py` | Settings validation/persistence, proportional motion, coordinate conversion, OSC encoding/sending, the button edge tracker and output controller |
+| `followspot_core.py` | Settings validation/persistence, proportional motion, coordinate conversion, OSC encoding/sending, PSN packet encoders and `PsnStreamer` (background 30 Hz PSN sender), the button edge tracker and output controller |
 | `joystick.py` | SDL2 and native macOS HID readers via `ctypes`, normalization and the combined device list |
 | `Launch Followspot.command` | Selects a Tk-capable Python and launches the window |
 | `Launch Followspot.bat` | Windows equivalent of the launcher; SDL2 only (no native HID), untested on Windows |
 | `settings.example.json` | Shareable example configuration; must equal the `Settings` defaults |
 | `requirements.txt` | Comment-only: records that there are no third-party packages |
 | `.coderabbit.yaml` | Review-bot configuration (docstring check off) |
-| `tests/` | Core behavior, device backend, and headless window lifecycle tests |
+| `tools/psn_test_sender.py` | Stdlib PSN test sender for onPC; not imported by the app, which has its own `PsnStreamer` (see docs/PSN.md) |
+| `tests/` | Core behavior, PSN encoder/streamer, device backend, and headless window lifecycle tests |
 | `README.md` | Short overview: documentation index, quick start, launch, diagnostics |
 | `docs/GRANDMA3_SETUP.md` | Operator step-by-step onPC setup with commands, zoom/iris executor, troubleshooting |
 | `docs/OPERATING.md` | Operator guide: joystick, buttons, reset lock, zoom/iris, test mode, stop/restart, limitations |
+| `docs/PSN.md` | PSN output guide: app and onPC setup, Stop vs Release marker, verified findings, unverified other-computer setup, troubleshooting, packet format, open risks |
 | `docs/superpowers/` | Original approved design and implementation plan; historical context |
 
 Runtime `settings.json` is operator-owned and ignored by Git. Do not overwrite
@@ -81,7 +83,8 @@ failures; never report skipped or blocked hardware checks as passing.
 - Output starts stopped. Start applies settings and sends the displayed target,
   current slider level and enabled zoom/iris level. There is no position or fader feedback from MA.
 - Normal polling is approximately 30 Hz. Suppress duplicate output; there is no
-  idle resend (it would retake the console selection and fader). A long sample
+  idle resend of OSC output (it would retake the console selection and fader; PSN streaming
+  is the exception below). A long sample
   gap moves at most one `MAX_STEP` (0.25 s) of motion; diagonal speed is capped.
 - Stop retains target/brightness and attempts releases for buttons this
   controller pressed. Held-at-Start buttons must not produce a new press or
@@ -90,6 +93,27 @@ failures; never report skipped or blocked hardware checks as passing.
   closes the device. Any failure while processing input or sending OSC stops
   output and keeps the device open; unexpected exception types are re-raised
   after stopping so the window never shows running output the controller stopped.
+- PSN position output (`position_output` = `osc` default or `psn`, with `psn_tracker_id`,
+  `psn_group`, `psn_port`, `psn_interface`; details in docs/PSN.md). In PSN mode
+  `Controller` calls `send_position` instead of building `/cmd` marker commands, and
+  `App` owns one `PsnStreamer` whose thread streams the latest position at 30 Hz
+  (INFO at 1 Hz). This streaming is the exception to "no idle resend": onPC resets
+  the MArker to 0, 0, 0 when packets stop. Brightness, zoom/iris and buttons stay
+  on OSC with the existing rules. Lifecycle: Start opens the stream (a failed Start
+  closes only a stream it created); Stop, joystick read failure and OSC failure
+  stop output but hold the stream; the stream closes only on Release marker, a
+  confirmed window close (on macOS also Cmd-Q, routed through `::tk::mac::Quit`; the command's
+  existence is tested but a real Quit event is not), or a stream error. Release marker (Live button or local
+  button action `release_marker`) stops output if running and closes the stream;
+  in the same sample it acts with Stop and beats Start and Reset, and is a no-op
+  with no stream open. `App.check_streamer` runs first in every poll, so a held
+  stream's send error is surfaced even with no joystick open: it closes the
+  stream, stops output if running and records fault kind `psn`, which persists
+  until the next successful Start (the stream is already closed, so Release marker
+  cannot clear it). PSN fields stay editable while a stream
+  is held and output is stopped, but `apply_settings` refuses a changed PSN field
+  until Release. Validation does not change with the mode (`marker_id` and the
+  Movement Space still apply even though PSN does not use them for conversion).
 - Test mode (`Controller.start(test=True)`) needs no joystick: a figure 8 around the initial X/Y (`figure_eight`) and fixed `test_brightness`. `poll` skips joystick reads and button processing while a test runs; failures stop output like normal.
 - Settings changes require stopped output. Release commands must be attempted
   before closing the sender, and release failures must remain visible.
@@ -125,8 +149,8 @@ failures; never report skipped or blocked hardware checks as passing.
 - Coordinates are in metres in the script. Convert to percent using the actual
   MArker **Movement Space** bounds, which differ from operating limits and the
   MArker **Target Space**. Defaults are examples, not measured stage geometry.
-- MA receives a single OSC message, not an OSC bundle. Movement uses `/cmd`
-  with an OSC string containing semicolon-separated commands. Clear only the
+- MA receives a single OSC message, not an OSC bundle. OSC position output uses
+  `/cmd` (PSN mode streams the position instead) with an OSC string containing semicolon-separated commands. Clear only the
   selection, select the configured MArker, then set its attributes:
 
   ```text
@@ -191,6 +215,16 @@ reproduced. One plausible cause was fixed on 2026-10-09: an OSC send failure
 used to close the joystick, so the next Start showed that message. Do not
 claim the report is resolved without operator evidence.
 
+On 2026-10-14 the operator verified in onPC 2.5.0.3 that PSN packets move a
+MArker without touching the console selection or encoders (multicast
+236.10.10.10:56565 on lo0; MArker returns to 0, 0, 0 when packets stop).
+PSN position output was implemented on 2026-10-14 (branch `feat/psn-output`) and
+is covered by automated tests only. It is not verified with the real joystick,
+a real show, onPC receiving the app's own stream, onPC on another computer or
+Windows, and the Live view and Setup layout were not checked visually; see
+docs/PSN.md, section Remaining work, for the operator checklist, the open
+Release marker confirmation decision and the known minor issues.
+
 Added since then: proportional zoom/iris axis, the figure-8 test mode with the
 step-by-step setup guide, and the Windows launcher. None has operator
 confirmation recorded here: zoom/iris movement in a test show and the Windows
@@ -198,7 +232,9 @@ launcher on real hardware remain unverified.
 
 Automated coverage: core motion/configuration/OSC-packet tests, simulated SDL
 input/disconnect, native HID discovery and combined-list tests with doubles,
-headless window lifecycle tests (including zoom/iris and test mode), real Tk
+PSN encoder (pinned bytes), streamer (injected sockets; one real socket open, no packet is
+received by a real listener) and controller tests, headless window lifecycle tests (including
+zoom/iris, test mode and PSN stream hold/release/close, faults and button priority), real Tk
 workflow tests, and a visible startup test with the real backend. Tk tests skip
 when Tk is missing or cannot open a window. The
 Windows launcher has no automated coverage. MA's installed 2.5 system tests

@@ -45,5 +45,10 @@
   "host": "127.0.0.1",
   "port": 8000,
   "prefix": "",
+  "position_output": "osc",
+  "psn_tracker_id": 1,
+  "psn_group": "236.10.10.10",
+  "psn_port": 56565,
+  "psn_interface": "127.0.0.1",
   "buttons": {}
 }

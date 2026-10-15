@@ -23,7 +23,7 @@ Start also applies and saves the displayed settings. It immediately sends the di
 
 ## Buttons
 
-In **Setup → Buttons**, click **Learn button**, press the desired button, and choose **Action on press**. Choose **MA command** to enter press/release commands, or **Start output**, **Stop output**, **Toggle output** or **Reset target** to control this program. Click **Add / update mapping**, then **Save settings**. The editor explains when either step remains pending. Save/Start and selecting another mapping cannot discard unfinished editor changes; use **Discard editor changes** to revert the editor deliberately. Default mappings are empty. MA command examples:
+In **Setup → Buttons**, click **Learn button**, press the desired button, and choose **Action on press**. Choose **MA command** to enter press/release commands, or **Start output**, **Stop output**, **Toggle output**, **Reset target** or **Release PSN marker** to control this program. Click **Add / update mapping**, then **Save settings**. The editor explains when either step remains pending. Save/Start and selecting another mapping cannot discard unfinished editor changes; use **Discard editor changes** to revert the editor deliberately. Default mappings are empty. MA command examples:
 
 | Action | Press | Release |
 | --- | --- | --- |
@@ -36,6 +36,7 @@ Commands execute as entered. MA commands are sent only while output runs. Each m
 Priority and held-button rules:
 
 - For simultaneous local presses, Stop takes priority. While stopped, Start takes priority over Reset.
+- Release marker acts with Stop and beats Start and Reset (both ignored in that sample). With no PSN stream open it does nothing. See [PSN.md](PSN.md).
 - Start is ignored when already running. Toggle acts as Stop when running and Start when stopped.
 - Reset obeys the same Live lock as the window button (see below).
 - A button already held when you connect, apply settings or Start is ignored until it is released and pressed again, including after a failed Start.
@@ -63,13 +64,15 @@ To check onPC without a joystick, open **Diagnostics**, set size, seconds per la
 
 **Stop** sends release commands for buttons this tool pressed, stops transmitting, and keeps the current target and zoom/iris level in memory. It does not clear the programmer, release the MArker, blackout the lights or move them home. Resume with Start. Closing the window attempts button releases and stops output.
 
+In PSN position output, **Stop** keeps streaming the last position so the lights stay put, and **Release marker** (Live button or a mapped button) ends the stream so onPC resets the MArker to 0, 0, 0. Closing the window asks first when a stream is open. The Live **Release marker** button acts immediately, with no confirmation, including while output is running (it stops output too). Details, including the held-position display and what is refused while a stream is held, are in [PSN.md](PSN.md#configure-the-app).
+
 On a joystick disconnect or read failure, output stops and the joystick is closed: reconnect, Refresh, then Start. On an OSC send failure, output stops but the joystick stays selected: correct the network problem shown in the status, then Start. Output never resumes automatically. Relaunching restores your saved initial X/Y, Z and zoom/iris level; review those before enabling.
 
 Faults stay visible below the views and in Diagnostics, independently of routine status messages. Successful reconnect, settings save or output restart clears the corresponding fault. Failed button releases remain visible even after restarting: check and release the held actions in onPC, then use **Acknowledge release warning** in Diagnostics.
 
 ## Settings file
 
-Existing settings load without migration: a missing `zoom_enabled` defaults to `false`, a missing `reset_locked` to `true`, and button mappings without `action` remain MA commands. Local mappings use an action, for example `"0": {"action": "toggle"}`; valid actions are `command`, `start`, `stop`, `toggle` and `reset`.
+Existing settings load without migration: a missing `zoom_enabled` defaults to `false`, a missing `reset_locked` to `true`, and button mappings without `action` remain MA commands. Local mappings use an action, for example `"0": {"action": "toggle"}`; valid actions are `command`, `start`, `stop`, `toggle`, `reset` and `release_marker`. Five settings select the position output: `position_output`, `psn_tracker_id`, `psn_group`, `psn_port` and `psn_interface`. Their values and defaults are listed in [PSN.md](PSN.md#configure-the-app); a missing one takes its default.
 
 Stop output before editing settings. **Unsaved changes** marks drafts, including unfinished button editor changes; **Settings saved** means the displayed settings match the applied configuration. **Save settings** validates, saves and applies them. Invalid fields are marked and their page is opened. A failed save preserves the saved configuration. Start and the stopped window Reset also save/apply drafts. The live reset lock remains available during output and saves only its own flag.
 
@@ -78,8 +81,8 @@ Existing settings need no migration for the percentage display: dead zones still
 ## Limitations
 
 - OSC is best-effort UDP with no acknowledgement or position feedback. The status means packets were sent, not that onPC received or accepted them.
-- Changed coordinates are sent at approximately 30 Hz and duplicates are suppressed. There is deliberately no idle resend: each resend would reselect the MArker and force the executor fader back to the slider level.
+- In OSC mode, changed coordinates are sent at approximately 30 Hz and duplicates are suppressed. There is deliberately no idle resend: each resend would reselect the MArker and force the executor fader back to the slider level. PSN mode streams the position continuously instead, because onPC resets the MArker when packets stop; brightness and zoom / iris stay on OSC with the same no-idle-resend rule.
 - If the window's updates are delayed (for example by a modal dialog or macOS throttling a background app), each late update moves at most a quarter-second of travel instead of jumping.
 - If a packet is lost, a held target may stay at the previous received position until another position is sent; press Stop then Start to resend the displayed target. Lost button-release packets may need a manual release command in onPC.
-- MArker input uses the programmer and can change the console's selection context. Each position update sends, in one OSC string: `ClearSelection; MArker <CID>; Attribute "XYZ_X" At Absolute Percent <value>; ...`. Selection must be separate from attribute assignment; `MArker 1 Attribute ...` is rejected by onPC. Avoid concurrent programmer work that relies on the selection during followspot operation; for independent programming, a separate onPC station or user (or a future PSN implementation) may suit better.
+- MArker input uses the programmer and can change the console's selection context. Each position update sends, in one OSC string: `ClearSelection; MArker <CID>; Attribute "XYZ_X" At Absolute Percent <value>; ...`. Selection must be separate from attribute assignment; `MArker 1 Attribute ...` is rejected by onPC. Avoid concurrent programmer work that relies on the selection during followspot operation in OSC mode. PSN position output (Setup → OSC → Position output) avoids this: it was verified with a test sender to leave the selection alone, see [PSN.md](PSN.md). It has not yet been checked with the real joystick or a real show.
 - Automated tests cannot prove end-to-end operation. Before show use, check physical input, OSC reception, movement smoothness and real fixture aiming from a normal macOS launch with an onPC test show.

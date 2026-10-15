@@ -100,6 +100,8 @@ In the master controls menu, tap **Prog Time** until its green marker disappears
 
 Check in Terminal: `lsof -nP -iUDP:8000` should show onPC listening.
 
+To keep the console selection free, use PSN position output: see [PSN.md](PSN.md). Brightness, zoom / iris and buttons still need this OSC setup.
+
 ## Step 9. Enter the values in the tool
 
 Open the tool (`Launch Followspot.command`) and fill in these pages under **Setup**. Click **Save settings** when done.

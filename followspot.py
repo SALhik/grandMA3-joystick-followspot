@@ -9,8 +9,8 @@ from pathlib import Path
 import sys
 import time
 
-from followspot_core import (BUTTON_ACTIONS, ButtonEdges, Controller, OscSender, Settings, SettingsError, clamp,
-                              learn_axis, local_actions, setting_types)
+from followspot_core import (BUTTON_ACTIONS, PSN_FIELDS, ButtonEdges, Controller, OscSender, PsnStreamer, Settings,
+                              SettingsError, clamp, learn_axis, local_actions, setting_types)
 from followspot_ui import AXIS_NAMES, PERCENT_FIELDS, FollowspotView, display_value
 from joystick import Joystick
 
@@ -40,6 +40,7 @@ class App:
         self.root, self.tk, self.ttk, self.messagebox = root, tk, ttk, messagebox
         self.settings_path = Path(settings_path)
         self.sender = None
+        self.streamer = None
         self.joystick = None
         self.controller = None
         self.learning = None
@@ -52,6 +53,9 @@ class App:
         self.root.geometry('860x740')
         self.root.minsize(760, 660)
         self.root.protocol('WM_DELETE_WINDOW', self.close)
+        if root.tk.call('tk', 'windowingsystem') == 'aqua':
+            # Cmd-Q and the app menu's Quit otherwise bypass the close confirmation.
+            root.createcommand('::tk::mac::Quit', self.close)
         try:
             self.settings = Settings.load(self.settings_path)
         except (ValueError, OSError) as exc:
@@ -59,7 +63,7 @@ class App:
             messagebox.showerror('Settings could not be loaded', f'{exc}\n\nCorrect or rename {self.settings_path.name}, then restart.')
             root.destroy()
             return
-        self.controller = Controller(self.settings, self.send)
+        self.controller = Controller(self.settings, self.send, self.send_position)
         self.draft_buttons = json.loads(json.dumps(self.settings.buttons))
         self.values = {}
         for name, kind in setting_types().items():
@@ -171,7 +175,8 @@ class App:
         self.joystick.close()
         self.axes, self.buttons = [], []
         self.device_label.set('Joystick disconnected / unavailable · Refresh to reconnect')
-        self.record_fault('input', f'Joystick unavailable — output stopped. {reason}\nReconnect it, then Refresh in Setup → Joystick.')
+        hold = ' The PSN stream is still holding the marker; use Release marker to let it reset.' if self.streamer is not None else ''
+        self.record_fault('input', f'Joystick unavailable — output stopped. {reason}\nReconnect it, then Refresh in Setup → Joystick.{hold}')
 
     def begin_learn(self, key):
         if not self.require_stopped() or not self.axes:
@@ -225,6 +230,8 @@ class App:
             if self.view.mapping_pending():
                 raise SettingsError('Add / update the button mapping or discard editor changes before saving.', 'buttons')
             settings = settings_from_values(self.values, self.draft_buttons)
+            if self.streamer is not None and any(getattr(settings, key) != getattr(self.settings, key) for key in PSN_FIELDS):
+                raise SettingsError('Release the PSN marker before changing position output or PSN settings.', *PSN_FIELDS)
             settings.save(self.settings_path)
         except (OSError, ValueError) as exc:
             self.view.show_error(exc)
@@ -235,7 +242,7 @@ class App:
         self.settings = settings
         self.view.clear_errors()
         self.clear_fault('settings')
-        self.controller = Controller(settings, self.send)
+        self.controller = Controller(settings, self.send, self.send_position)
         self.controller.motion.xyz = [clamp(xyz[0], settings.x_min, settings.x_max),
                                       clamp(xyz[1], settings.y_min, settings.y_max), settings.z]
         self.controller.motion.zoom_level = zoom_level
@@ -258,6 +265,7 @@ class App:
             return
         if not self.apply_settings():
             return
+        created_stream = False
         try:
             if not test:
                 if not (self.joystick and self.joystick.handle):
@@ -272,14 +280,19 @@ class App:
                 self.sender.close()
             s = self.settings
             self.sender = OscSender(s.host, s.port, s.prefix)
+            if s.position_output == 'psn':
+                created_stream = self.open_streamer()
             self.controller.start(self.axes, test=test)
             self.last_tick = time.monotonic()
             self.clear_fault('output')
+            self.clear_fault('psn')
             self.output_label.set('TEST RUNNING (figure 8)' if test else 'OUTPUT RUNNING')
             self.lock_settings(True)
             self.status.set('Test running: the marker traces a figure 8; the joystick is ignored. Stop ends it.' if test else
                             'Output running. Centre holds position and zoom/iris. Stop retains tracked levels.')
         except (OSError, RuntimeError, ValueError) as exc:
+            if created_stream:
+                self.close_streamer()
             self.stop_output(str(exc))
             self.messagebox.showerror('Could not start output', str(exc))
 
@@ -287,6 +300,51 @@ class App:
         if self.sender is None:
             raise OSError('OSC output is not connected.')
         self.sender.send(address, value)
+
+    def send_position(self, xyz):
+        if self.streamer is None:
+            raise OSError('PSN stream is not open.')
+        self.streamer.set_position(xyz)
+
+    def open_streamer(self):
+        """Open the PSN stream unless one is already held; True when this call created it."""
+        if self.streamer is not None:
+            return False
+        self.streamer = PsnStreamer(self.settings, self.controller.motion.xyz)
+        return True
+
+    def close_streamer(self):
+        streamer, self.streamer = self.streamer, None
+        if streamer is not None:
+            streamer.close()
+
+    def release_marker(self):
+        if self.streamer is None:
+            self.status.set('No PSN stream is open.')
+            return False
+        if self.controller.active:
+            self.stop_output()
+        self.close_streamer()
+        self.clear_fault('psn')
+        self.update_position()
+        self.status.set('PSN marker released. onPC resets the MArker to 0, 0, 0.')
+        return True
+
+    def check_streamer(self):
+        """A held stream may outlive output and the joystick; surface its failure from every poll."""
+        if self.streamer is None:
+            return
+        error = self.streamer.poll_error()
+        if error is None:
+            return
+        reason = f'PSN stream failed: {error}. The marker returns to 0, 0, 0 in onPC. Check the PSN interface; see docs/PSN.md.'
+        self.close_streamer()
+        if self.controller.active:
+            self.stop_output(reason, fault_kind='psn')
+        else:
+            self.record_fault('psn', reason)
+            self.status.set(reason)
+        self.update_position()
 
     def stop_output(self, reason=None, fault_kind='output'):
         if self.controller.test:
@@ -300,6 +358,8 @@ class App:
         self.output_label.set('OUTPUT STOPPED')
         self.lock_settings(False)
         message = reason if reason is not None else 'Output stopped. Position, brightness and zoom/iris are retained.'
+        if self.streamer is not None:
+            message += ' PSN is still holding the marker; use Release marker to let it reset.'
         self.status.set(message + (' Release send failed: ' + '; '.join(errors) if errors else ''))
         if reason is not None:
             self.record_fault(fault_kind, f'Output stopped: {reason}')
@@ -307,6 +367,8 @@ class App:
                 self.record_fault('release', reason + ' Check and release held actions in onPC; acknowledge in Diagnostics.')
         if errors:
             self.record_fault('release', 'Release send failed: ' + '; '.join(errors) + '. Check and release held actions in onPC; acknowledge in Diagnostics.')
+        if self.streamer is not None:
+            self.update_position()
 
     def lock_settings(self, locked):
         self.view.set_running(locked)
@@ -347,7 +409,11 @@ class App:
 
     def update_position(self):
         x, y, z = self.controller.motion.xyz
-        self.position_label.set(f'X {x:+.3f} m   Y {y:+.3f} m   Z {z:.3f} m')
+        text = f'X {x:+.3f} m   Y {y:+.3f} m   Z {z:.3f} m'
+        if self.streamer is not None and not self.controller.active:
+            hx, hy, hz = self.streamer.position
+            text += f'\nHeld at  X {hx:+.3f} m   Y {hy:+.3f} m   Z {hz:.3f} m'
+        self.position_label.set(text)
         self.zoom_label.set(f'Zoom / iris  {self.controller.motion.zoom_level:.1f}%' if self.settings.zoom_enabled else
                             'Zoom / iris  disabled')
         self.view.refresh()
@@ -359,9 +425,14 @@ class App:
             self.button_edges.seed(self.buttons)
             presses = releases = []
         actions = local_actions(presses, self.settings.buttons)
-        # Stop wins; Start wins over Reset when stopped and is ignored when active.
-        if 'stop' in actions or ('toggle' in actions and self.controller.active):
+        # Stop and Release marker both act; Start and Reset are then ignored this sample.
+        # Otherwise Start wins over Reset when stopped and is ignored when active.
+        stopping = 'stop' in actions or ('toggle' in actions and self.controller.active)
+        if stopping:
             self.stop_output()
+        # A Release marker press with no stream open does nothing, so the sample continues.
+        released = 'release_marker' in actions and self.release_marker()
+        if stopping or released:
             return
         if not self.controller.active and ('start' in actions or 'toggle' in actions):
             self.start_output()
@@ -375,6 +446,7 @@ class App:
         now = time.monotonic()
         dt, self.last_tick = now - self.last_tick, now
         try:
+            self.check_streamer()
             if self.controller.active and self.controller.test:
                 try:
                     self.controller.tick((), dt)
@@ -489,8 +561,13 @@ class App:
             self.status.set('Mapping removed from the draft. Save settings to persist the change.')
 
     def close(self):
+        if self.streamer is not None and not self.messagebox.askokcancel(
+                'Close and reset the marker?',
+                'The PSN stream is open. Closing stops it, and onPC resets the MArker to 0, 0, 0.'):
+            return
         if self.controller:
             self.stop_output()
+        self.close_streamer()
         if self.joystick:
             self.joystick.shutdown()
         self.root.destroy()
