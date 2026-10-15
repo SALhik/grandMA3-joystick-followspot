@@ -19,6 +19,21 @@ BUTTON_ACTIONS = {'command': 'MA command', 'start': 'Start output',
                   'stop': 'Stop output', 'toggle': 'Toggle output',
                   'reset': 'Reset target', 'release_marker': 'Release PSN marker'}
 PSN_FIELDS = ('control_mode', 'position_output', 'psn_tracker_id', 'psn_group', 'psn_port', 'psn_interface')
+# Settings used by only one control mode or position output. Only the active path is range-checked.
+MARKER_FIELDS = ('marker_id', 'z', 'x_min', 'x_max', 'y_min', 'y_max', 'initial_x', 'initial_y',
+                 'space_x_min', 'space_x_max', 'space_y_min', 'space_y_max', 'space_z_min', 'space_z_max',
+                 'max_speed', 'test_size', 'position_output')
+OSC_POSITION_FIELDS = ('attribute_x', 'attribute_y', 'attribute_z')
+PSN_POSITION_FIELDS = ('psn_tracker_id', 'psn_group', 'psn_port', 'psn_interface')
+PAN_TILT_FIELDS = ('fixture_group', 'attribute_pan', 'attribute_tilt', 'pan_tilt_speed', 'pan_min', 'pan_max',
+                   'tilt_min', 'tilt_max', 'initial_pan', 'initial_tilt', 'test_pan_tilt_size')
+
+
+def inactive_fields(control_mode, position_output):
+    """Settings the given control mode and position output never use."""
+    if control_mode == 'pan_tilt':
+        return set(MARKER_FIELDS + OSC_POSITION_FIELDS + PSN_POSITION_FIELDS)
+    return set(PAN_TILT_FIELDS + (PSN_POSITION_FIELDS if position_output == 'osc' else OSC_POSITION_FIELDS))
 
 
 def clamp(value, low, high):
@@ -126,10 +141,10 @@ class Settings:
                 raise SettingsError(f'{name} must be true or false.', name)
             elif kind is str and not isinstance(value, str):
                 raise SettingsError(f'{name} must be text.', name)
+        if self.control_mode not in ('marker', 'pan_tilt'):
+            raise SettingsError('Control mode must be marker or pan_tilt.', 'control_mode')
         if not 0 <= self.dead_zone < 0.9:
             raise SettingsError('Dead zone must be at least 0% and below 90%.', 'dead_zone')
-        if not 0 < self.max_speed <= 100:
-            raise SettingsError('Maximum speed must be greater than 0 and at most 100 m/s.', 'max_speed')
         if any(not -0.9 <= v <= 0.9 for v in (self.centre_x, self.centre_y)):
             raise SettingsError('Calibrate with the stick near its centre.', 'centre_x', 'centre_y')
         if min(self.axis_x, self.axis_y, self.axis_slider) < 0 or len({self.axis_x, self.axis_y, self.axis_slider}) != 3:
@@ -148,6 +163,26 @@ class Settings:
             raise SettingsError('Zoom/iris executor page and number must be positive.', 'zoom_executor_page', 'zoom_executor_number')
         if self.zoom_enabled and (self.zoom_executor_page, self.zoom_executor_number) == (self.executor_page, self.executor_number):
             raise SettingsError('Zoom/iris and brightness must use different executors.', 'zoom_executor_page', 'zoom_executor_number', 'executor_page', 'executor_number')
+        if not 2 <= self.test_period <= 600 or not 0 <= self.test_brightness <= 100:
+            raise SettingsError('Test period must be 2–600 s and brightness 0–100%.', 'test_period', 'test_brightness')
+        for key in ('executor_page', 'executor_number'):
+            if getattr(self, key) < 1:
+                raise SettingsError('IDs must be positive.', key)
+        if not 1 <= self.port <= 65535:
+            raise SettingsError('OSC port must be 1–65535.', 'port')
+        if not self.host.strip() or any(c.isspace() for c in self.host) or '\0' in self.host:
+            raise SettingsError('OSC host must be an IP address or hostname without spaces.', 'host')
+        if self.prefix and not re.fullmatch(r'[A-Za-z0-9_.-]+', self.prefix):
+            raise SettingsError('OSC prefix must contain only letters, numbers, dot, underscore or hyphen, without slashes.', 'prefix')
+        if self.control_mode == 'marker':
+            self.validate_marker()
+        else:
+            self.validate_pan_tilt()
+        self.validate_buttons()
+
+    def validate_marker(self):
+        if not 0 < self.max_speed <= 100:
+            raise SettingsError('Maximum speed must be greater than 0 and at most 100 m/s.', 'max_speed')
         for axis in ('x', 'y', 'z'):
             lo, hi = getattr(self, f'space_{axis}_min'), getattr(self, f'space_{axis}_max')
             if lo >= hi:
@@ -159,28 +194,20 @@ class Settings:
                     raise SettingsError(f'{axis.upper()} operating limits and initial position must fit inside the movement space.', f'{axis}_min', f'{axis}_max', f'initial_{axis}', f'space_{axis}_min', f'space_{axis}_max')
             elif not lo <= self.z <= hi:
                 raise SettingsError('Z height must fit inside the Z movement space.', 'z', 'space_z_min', 'space_z_max')
-        if not 0 < self.test_size <= 100 or not 2 <= self.test_period <= 600 or not 0 <= self.test_brightness <= 100:
-            raise SettingsError('Test size must be greater than 0 and at most 100 m, period 2–600 s and brightness 0–100%.', 'test_size', 'test_period', 'test_brightness')
-        for key in ('marker_id', 'executor_page', 'executor_number'):
-            if getattr(self, key) < 1:
-                raise SettingsError('IDs must be positive.', key)
-        if not 1 <= self.port <= 65535:
-            raise SettingsError('OSC port must be 1–65535.', 'port')
-        if self.position_output not in ('osc', 'psn'):
+        if not 0 < self.test_size <= 100:
+            raise SettingsError('Test size must be greater than 0 and at most 100 m.', 'test_size')
+        if self.marker_id < 1:
+            raise SettingsError('IDs must be positive.', 'marker_id')
+        if self.position_output == 'osc':
+            for key in OSC_POSITION_FIELDS:
+                if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*', getattr(self, key)):
+                    raise SettingsError('Use a valid MA attribute library name.', key)
+        elif self.position_output == 'psn':
+            self.validate_psn()
+        else:
             raise SettingsError('Position output must be osc or psn.', 'position_output')
-        if self.control_mode not in ('marker', 'pan_tilt'):
-            raise SettingsError('Control mode must be marker or pan_tilt.', 'control_mode')
-        if self.fixture_group < 1:
-            raise SettingsError('Fixture group must be positive.', 'fixture_group')
-        if not 0 < self.pan_tilt_speed <= 1000:
-            raise SettingsError('Pan/tilt speed must be greater than 0 and at most 1000 percentage points/s.', 'pan_tilt_speed')
-        for axis in ('pan', 'tilt'):
-            lo, hi, initial = getattr(self, f'{axis}_min'), getattr(self, f'{axis}_max'), getattr(self, f'initial_{axis}')
-            if not 0 <= lo < hi <= 100 or not lo <= initial <= hi:
-                raise SettingsError(f'{axis.capitalize()} limits must be 0-100 with the minimum below the maximum, and contain the initial value.',
-                                    f'{axis}_min', f'{axis}_max', f'initial_{axis}')
-        if not 0 < self.test_pan_tilt_size <= 50:
-            raise SettingsError('Pan/tilt test size must be greater than 0 and at most 50 percentage points.', 'test_pan_tilt_size')
+
+    def validate_psn(self):
         if not 1 <= self.psn_tracker_id <= 65535:
             raise SettingsError('PSN tracker ID must be 1–65535.', 'psn_tracker_id')
         if not 1 <= self.psn_port <= 65535:
@@ -195,13 +222,24 @@ class Settings:
             ipaddress.IPv4Address(self.psn_interface)
         except ValueError:
             raise SettingsError('PSN interface must be an IPv4 address of this computer, for example 127.0.0.1.', 'psn_interface') from None
-        if not self.host.strip() or any(c.isspace() for c in self.host) or '\0' in self.host:
-            raise SettingsError('OSC host must be an IP address or hostname without spaces.', 'host')
-        if self.prefix and not re.fullmatch(r'[A-Za-z0-9_.-]+', self.prefix):
-            raise SettingsError('OSC prefix must contain only letters, numbers, dot, underscore or hyphen, without slashes.', 'prefix')
-        for key in ('attribute_x', 'attribute_y', 'attribute_z', 'attribute_pan', 'attribute_tilt'):
+
+    def validate_pan_tilt(self):
+        if self.fixture_group < 1:
+            raise SettingsError('Fixture group must be positive.', 'fixture_group')
+        if not 0 < self.pan_tilt_speed <= 1000:
+            raise SettingsError('Pan/tilt speed must be greater than 0 and at most 1000 percentage points/s.', 'pan_tilt_speed')
+        for axis in ('pan', 'tilt'):
+            lo, hi, initial = getattr(self, f'{axis}_min'), getattr(self, f'{axis}_max'), getattr(self, f'initial_{axis}')
+            if not 0 <= lo < hi <= 100 or not lo <= initial <= hi:
+                raise SettingsError(f'{axis.capitalize()} limits must be 0-100 with the minimum below the maximum, and contain the initial value.',
+                                    f'{axis}_min', f'{axis}_max', f'initial_{axis}')
+        if not 0 < self.test_pan_tilt_size <= 50:
+            raise SettingsError('Pan/tilt test size must be greater than 0 and at most 50 percentage points.', 'test_pan_tilt_size')
+        for key in ('attribute_pan', 'attribute_tilt'):
             if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*', getattr(self, key)):
                 raise SettingsError('Use a valid MA attribute library name.', key)
+
+    def validate_buttons(self):
         if not isinstance(self.buttons, dict):
             raise SettingsError('Button mappings must be an object.', 'buttons')
         for key, mapping in self.buttons.items():

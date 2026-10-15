@@ -436,7 +436,7 @@ class PsnSettingsTests(unittest.TestCase):
         for changes, field in cases:
             with self.subTest(changes=changes):
                 with self.assertRaises(core.SettingsError) as caught:
-                    core.Settings.from_dict(dict(core.Settings().to_dict(), **changes))
+                    core.Settings.from_dict(dict(core.Settings().to_dict(), **dict({'position_output': 'psn'}, **changes)))
                 self.assertIn(field, caught.exception.fields)
 
     def test_release_marker_is_a_local_action_without_ma_commands(self):
@@ -526,12 +526,8 @@ class PanTiltSettingsTests(unittest.TestCase):
         for changes, field in cases:
             with self.subTest(changes=changes):
                 with self.assertRaises(core.SettingsError) as caught:
-                    core.Settings.from_dict(dict(core.Settings().to_dict(), **changes))
+                    core.Settings.from_dict(dict(core.Settings().to_dict(), **dict({'control_mode': 'pan_tilt'}, **changes)))
                 self.assertIn(field, caught.exception.fields)
-
-    def test_pan_tilt_values_are_validated_even_in_marker_mode(self):
-        with self.assertRaises(core.SettingsError):
-            core.Settings.from_dict(dict(core.Settings().to_dict(), control_mode='marker', pan_min=60))
 
     def test_pan_tilt_settings_roundtrip(self):
         s = core.Settings.from_dict(dict(core.Settings().to_dict(), control_mode='pan_tilt', fixture_group=4,
@@ -543,6 +539,53 @@ class PanTiltSettingsTests(unittest.TestCase):
 
     def test_control_mode_is_guarded_while_a_psn_stream_is_held(self):
         self.assertIn('control_mode', core.PSN_FIELDS)
+
+
+class InactivePathValidationTests(unittest.TestCase):
+    """Only the active control mode and position output are range-checked; types are always checked."""
+    def load(self, **changes):
+        return core.Settings.from_dict(dict(core.Settings().to_dict(), **changes))
+
+    def test_pan_tilt_values_are_not_validated_in_marker_mode(self):
+        s = self.load(control_mode='marker', pan_min=60, fixture_group=0, pan_tilt_speed=0,
+                      test_pan_tilt_size=0, attribute_pan='Pan Tilt')
+        self.assertEqual(s.pan_min, 60)
+
+    def test_marker_values_are_not_validated_in_pan_tilt_mode(self):
+        s = self.load(control_mode='pan_tilt', marker_id=0, x_min=500.0, space_z_min=200.0, z=999.0,
+                      max_speed=0.0, test_size=0.0, attribute_x='X Y', position_output='sacn', psn_port=0)
+        self.assertEqual(s.marker_id, 0)
+
+    def test_psn_values_are_not_validated_with_osc_position_output(self):
+        s = self.load(position_output='osc', psn_tracker_id=0, psn_port=0, psn_group='10.0.0.5', psn_interface='localhost')
+        self.assertEqual(s.psn_port, 0)
+
+    def test_osc_marker_attributes_are_not_validated_with_psn_position_output(self):
+        s = self.load(position_output='psn', attribute_x='X Y', attribute_y='', attribute_z='1')
+        self.assertEqual(s.attribute_x, 'X Y')
+
+    def test_marker_values_shared_by_osc_and_psn_are_validated_with_psn(self):
+        with self.assertRaises(core.SettingsError) as caught:
+            self.load(position_output='psn', marker_id=0)
+        self.assertIn('marker_id', caught.exception.fields)
+
+    def test_types_are_checked_on_the_inactive_path(self):
+        for changes, field in (({'control_mode': 'pan_tilt', 'marker_id': '1'}, 'marker_id'),
+                               ({'control_mode': 'marker', 'pan_min': 'low'}, 'pan_min'),
+                               ({'position_output': 'osc', 'psn_port': 1.5}, 'psn_port')):
+            with self.subTest(changes=changes):
+                with self.assertRaises(core.SettingsError) as caught:
+                    self.load(**changes)
+                self.assertIn(field, caught.exception.fields)
+
+    def test_inactive_fields_name_the_other_paths(self):
+        marker_only = set(core.MARKER_FIELDS) | set(core.OSC_POSITION_FIELDS) | set(core.PSN_POSITION_FIELDS)
+        self.assertEqual(core.inactive_fields('marker', 'osc'), set(core.PAN_TILT_FIELDS) | set(core.PSN_POSITION_FIELDS))
+        self.assertEqual(core.inactive_fields('marker', 'psn'), set(core.PAN_TILT_FIELDS) | set(core.OSC_POSITION_FIELDS))
+        self.assertEqual(core.inactive_fields('pan_tilt', 'psn'), marker_only)
+        self.assertEqual(core.inactive_fields('pan_tilt', 'osc'), marker_only)
+        self.assertIn('position_output', core.MARKER_FIELDS)
+        self.assertNotIn('host', marker_only | set(core.PAN_TILT_FIELDS))
 
 
 class PanTiltTests(unittest.TestCase):
