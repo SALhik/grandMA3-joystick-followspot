@@ -7,6 +7,14 @@ PERCENT_FIELDS = {'dead_zone', 'zoom_dead_zone'}
 AXIS_NAMES = {'axis_x': 'left / right control', 'axis_y': 'upstage / downstage control',
               'axis_slider': 'brightness slider', 'axis_zoom': 'zoom / iris control',
               'button': 'button'}
+PAN_TILT_AXIS_NAMES = {'axis_x': 'pan control (left / right)', 'axis_y': 'tilt control (up / down)'}
+
+
+def axis_name(key, control_mode):
+    """Prompt wording for a learnable control; pan/tilt renames the two stick axes."""
+    if control_mode == 'pan_tilt' and key in PAN_TILT_AXIS_NAMES:
+        return PAN_TILT_AXIS_NAMES[key]
+    return AXIS_NAMES[key]
 
 
 def display_value(key, value):

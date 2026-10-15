@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 import followspot
-from followspot_core import ButtonEdges, Controller, Settings
+from followspot_core import ButtonEdges, Controller, Settings, pan_tilt_commands
 
 
 class Value:
@@ -751,6 +751,100 @@ class PsnWindowTests(unittest.TestCase):
         app.close()
         self.assertEqual(destroyed, [True])
         self.assertTrue(self.streamers[0].closed)
+
+
+class PanTiltWindowTests(unittest.TestCase):
+    app = WindowTests.app
+
+    def last_cmd(self, messages):
+        return [value for address, value in messages if address == '/cmd'][-1]
+
+    def test_pan_tilt_mode_opens_no_stream_even_with_psn_saved(self):
+        app, messages = self.app(control_mode='pan_tilt', position_output='psn')
+        app.start_output()
+        self.assertTrue(app.controller.active)
+        self.assertEqual(self.streamers, [])
+        self.assertIsNone(app.streamer)
+        self.assertTrue(self.last_cmd(messages).startswith('ClearSelection; Group 1;'))
+
+    def test_control_mode_cannot_change_while_a_stream_is_open(self):
+        app, _ = self.app(position_output='psn')
+        app.start_output()
+        app.stop_output()
+        app.values['control_mode'].set('pan_tilt')
+        self.assertFalse(app.apply_settings())
+        self.assertEqual(app.settings.control_mode, 'marker')
+        self.assertIn('control mode', app.faults['settings'])
+        app.release_marker()
+        self.assertTrue(app.apply_settings())
+        self.assertEqual(app.settings.control_mode, 'pan_tilt')
+
+    def test_apply_carries_and_clamps_both_states_across_a_mode_switch(self):
+        app, _ = self.app(control_mode='pan_tilt')
+        app.controller.motion.pan_tilt = [80.0, 20.0]
+        app.controller.motion.xyz = [3.0, 4.0, 1.5]
+        app.values['pan_max'].set('60')
+        app.values['tilt_min'].set('30')
+        self.assertTrue(app.apply_settings())
+        self.assertEqual(app.controller.motion.pan_tilt, [60.0, 30.0])
+        self.assertEqual(app.controller.motion.xyz, [3.0, 4.0, 1.5])
+        app.values['control_mode'].set('marker')
+        self.assertTrue(app.apply_settings())
+        self.assertEqual(app.controller.motion.pan_tilt, [60.0, 30.0])
+        self.assertEqual(app.controller.motion.xyz, [3.0, 4.0, 1.5])
+
+    def test_stop_and_restart_resends_the_displayed_pan_tilt(self):
+        app, messages = self.app(control_mode='pan_tilt')
+        app.start_output()
+        app.controller.tick([1.0, 0, -1], 0.2)
+        app.stop_output()
+        app.apply_settings()
+        app.start_output()
+        expected = '; '.join(pan_tilt_commands(app.settings, app.controller.motion.pan_tilt))
+        self.assertEqual(self.last_cmd(messages), expected)
+        self.assertIn('Percent 55.000000', expected)
+
+    def test_position_text_shows_pan_and_tilt_percent(self):
+        app, _ = self.app(control_mode='pan_tilt')
+        app.update_position()
+        self.assertEqual(app.position_label.get(), 'Pan 50.0%   Tilt 50.0%')
+
+    def test_reset_returns_to_the_initial_pan_tilt(self):
+        app, _ = self.app(control_mode='pan_tilt', initial_pan=30.0, initial_tilt=70.0)
+        app.controller.motion.pan_tilt = [10.0, 10.0]
+        self.assertTrue(app.reset_target())
+        self.assertEqual(app.controller.motion.pan_tilt, [30.0, 70.0])
+        self.assertIn('Pan 30.0%', app.position_label.get())
+
+    def test_test_mode_traces_pan_and_tilt(self):
+        app, messages = self.app(control_mode='pan_tilt')
+        app.start_output(test=True)
+        self.assertIn('pan and tilt', app.status.get())
+        app.controller.tick((), 0.5)
+        self.assertGreater(app.controller.motion.pan_tilt[0], 50.0)
+        self.assertEqual(len([m for m in messages if m[0] == '/cmd']), 2)
+
+    def test_mapped_release_marker_is_a_no_op_in_pan_tilt(self):
+        app, messages = self.app(control_mode='pan_tilt',
+                                 buttons={'0': {'action': 'release_marker'}, '1': {'press': 'Down', 'release': 'Up'}})
+        app.start_output()
+        app.buttons = [False, True, False]
+        app.process_input(0.033)
+        self.assertEqual(messages[-1], ('/cmd', 'Down'))
+        app.buttons = [True, False, False]
+        app.process_input(0.033)
+        self.assertTrue(app.controller.active)
+        self.assertEqual(messages[-1], ('/cmd', 'Up'))
+        self.assertFalse(app.release_marker())
+
+    def test_learn_prompt_names_pan_and_tilt_for_the_draft_mode(self):
+        app, _ = self.app()
+        app.begin_learn('axis_x')
+        self.assertIn('left / right control', app.status.get())
+        app.learning = None
+        app.values['control_mode'].set('pan_tilt')
+        app.begin_learn('axis_y')
+        self.assertIn('tilt control', app.status.get())
 
 
 class FakeJoystick:
