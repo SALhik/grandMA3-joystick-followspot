@@ -246,6 +246,7 @@ class Motion:
     def __init__(self, settings):
         self.settings = settings
         self.xyz = [settings.initial_x, settings.initial_y, settings.z]
+        self.pan_tilt = [settings.initial_pan, settings.initial_tilt]
         self.zoom_level = settings.initial_zoom
 
     def check_axes(self, axes):
@@ -267,8 +268,12 @@ class Motion:
         x = centred_axis(axes[s.axis_x], s.centre_x, s.invert_x)
         y = centred_axis(axes[s.axis_y], s.centre_y, s.invert_y)
         radius = math.hypot(x, y)
-        speed = max(0.0, min(1.0, (radius - s.dead_zone) / (1 - s.dead_zone))) * s.max_speed
-        if radius:
+        pan_tilt = s.control_mode == 'pan_tilt'
+        speed = max(0.0, min(1.0, (radius - s.dead_zone) / (1 - s.dead_zone))) * (s.pan_tilt_speed if pan_tilt else s.max_speed)
+        if radius and pan_tilt:
+            self.pan_tilt[0] = clamp(self.pan_tilt[0] + x / radius * speed * dt, s.pan_min, s.pan_max)
+            self.pan_tilt[1] = clamp(self.pan_tilt[1] + y / radius * speed * dt, s.tilt_min, s.tilt_max)
+        elif radius:
             self.xyz[0] = clamp(self.xyz[0] + x / radius * speed * dt, s.x_min, s.x_max)
             self.xyz[1] = clamp(self.xyz[1] + y / radius * speed * dt, s.y_min, s.y_max)
         self.xyz[2] = s.z
@@ -290,6 +295,13 @@ def figure_eight(s, t):
             clamp(s.initial_y + s.test_size / 2 * math.sin(2 * phase), s.y_min, s.y_max), s.z]
 
 
+def figure_eight_pan_tilt(s, t):
+    """Pan/tilt test target: a figure 8 around the initial pan/tilt, kept inside the limits."""
+    phase = 2 * math.pi * t / s.test_period
+    return [clamp(s.initial_pan + s.test_pan_tilt_size * math.sin(phase), s.pan_min, s.pan_max),
+            clamp(s.initial_tilt + s.test_pan_tilt_size / 2 * math.sin(2 * phase), s.tilt_min, s.tilt_max)]
+
+
 def learn_axis(before, after, threshold=0.3):
     if len(before) != len(after) or not before:
         return None
@@ -307,6 +319,14 @@ def marker_commands(s, xyz):
         percent = clamp((value - lo) / (hi - lo) * 100, 0, 100)
         attr = getattr(s, f'attribute_{axis}')
         commands.append(f'Attribute "{attr}" At Absolute Percent {percent:.6f}')
+    return commands
+
+
+def pan_tilt_commands(s, pan_tilt):
+    # Same shape as marker_commands: ClearSelection isolates the group and keeps programmer values.
+    commands = ['ClearSelection', f'Group {s.fixture_group}']
+    for attribute, value in zip((s.attribute_pan, s.attribute_tilt), pan_tilt):
+        commands.append(f'Attribute "{attribute}" At Absolute Percent {clamp(value, 0, 100):.6f}')
     return commands
 
 
@@ -480,7 +500,7 @@ def local_actions(presses, mappings):
 class Controller:
     def __init__(self, settings, send, send_position=None):
         settings.validate()
-        if settings.position_output == 'psn' and send_position is None:
+        if settings.control_mode == 'marker' and settings.position_output == 'psn' and send_position is None:
             raise ValueError('PSN position output needs a position callback.')
         self.settings = settings
         self.motion = Motion(settings)
@@ -512,21 +532,31 @@ class Controller:
             raise ValueError('Output is already active.')
         self.test, self.test_time = test, 0.0
         if test:
-            self.motion.xyz = figure_eight(self.settings, 0)
+            self._set_test_position(0)
         self.pressed.clear()
         self.last_commands = self.last_brightness = self.last_zoom = None
         self.active = True
         with self._stop_on_failure():
             self._output(axes)
 
+    def _set_test_position(self, t):
+        if self.settings.control_mode == 'pan_tilt':
+            self.motion.pan_tilt = figure_eight_pan_tilt(self.settings, t)
+        else:
+            self.motion.xyz = figure_eight(self.settings, t)
+
     def _output_position(self):
-        if self.settings.position_output == 'psn':
+        s = self.settings
+        if s.control_mode == 'pan_tilt':
+            commands = pan_tilt_commands(s, self.motion.pan_tilt)
+        elif s.position_output == 'psn':
             # The streamer keeps sending; the selection is never touched.
             self.send_position(tuple(self.motion.xyz))
             return
-        commands = marker_commands(self.settings, self.motion.xyz)
+        else:
+            commands = marker_commands(s, self.motion.xyz)
         if commands != self.last_commands:
-            # Keep selection and XYZ assignments in one OSC command string.
+            # Keep selection and position assignments in one OSC command string.
             # MA does not accept OSC bundles.
             self.send('/cmd', '; '.join(commands))
             self.last_commands = commands
@@ -552,7 +582,10 @@ class Controller:
         if self.active and self.settings.reset_locked:
             return False
         s = self.settings
-        self.motion.xyz = [s.initial_x, s.initial_y, s.z]
+        if s.control_mode == 'pan_tilt':
+            self.motion.pan_tilt = [s.initial_pan, s.initial_tilt]
+        else:
+            self.motion.xyz = [s.initial_x, s.initial_y, s.z]
         self.motion.zoom_level = s.initial_zoom
         if self.active:
             with self._stop_on_failure():
@@ -570,7 +603,7 @@ class Controller:
         with self._stop_on_failure():
             if self.test:
                 self.test_time += min(max(dt, 0), MAX_STEP)
-                self.motion.xyz = figure_eight(self.settings, self.test_time)
+                self._set_test_position(self.test_time)
             else:
                 self.motion.step(axes, dt)
             self._output(axes)
