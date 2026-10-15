@@ -24,7 +24,7 @@ Check: `List Attribute` shows `XYZ_X`, `XYZ_Y`, `XYZ_Z` for the MArker.
 
 1. **Patch → Stages → Edit → Spaces**: find the MArker's **Movement Space**.
 2. Write down its X, Y and Z **minimum and maximum**.
-3. Later you will type these into the tool's **Setup → Target / stage → MArker movement space** fields (Step 9). The tool converts metres to the 0–100 % attribute value with them, so they must match exactly. This is not the stage box and not the Target Space. The tool's defaults are an example 200 m cube centred on the origin, not measured geometry.
+3. Later you will type these into the tool's **Setup → Target → MArker movement space** fields (Step 9). The tool converts metres to the 0–100 % attribute value with them, so they must match exactly. This is not the stage box and not the Target Space. The tool's defaults are an example 200 m cube centred on the origin, not measured geometry.
 4. For the first version use an unrotated stage and space.
 
 ## Step 4. Set a small Target Space
@@ -94,7 +94,7 @@ In the master controls menu, tap **Prog Time** until its green marker disappears
 | FaderRange | 100 |
 | Prefix | empty |
 
-4. Choose the **Interface** that onPC listens on. The tool's default host is `127.0.0.1`. If onPC uses your Mac's Ethernet or Wi-Fi address, put **that IP** in the tool's **Setup → OSC → onPC host / IP** field. Do not assume loopback works.
+4. Choose the **Interface** that onPC listens on. The tool's default host is `127.0.0.1`. If onPC uses your Mac's Ethernet or Wi-Fi address, put **that IP** in the tool's **Setup → Output → onPC host / IP** field. Do not assume loopback works.
 5. Leave outgoing echo and command transmission off unless you need them. The row's Destination IP only affects OSC that onPC sends out.
 6. **In an existing show, check the other OSC rows first.** A show that already has an OSC row (for example row 1, set up for another controller) can stop this tool from working even though a blank test show works: MA showed the incoming messages and reported no error, but the marker never moved. The cause is probably that the older row handled the messages with its own settings, but this is not verified. Removing the old row fixed it in one theatre show. Delete or disable any other row that uses the same port (8000), or make it match the table above, and keep only one row for this tool.
 
@@ -108,8 +108,8 @@ Open the tool (`Launch Followspot.command`) and fill in these pages under **Setu
 
 | Tab | Fields |
 | --- | --- |
-| Target / stage | MArker CID, Z height, operating limits, initial X/Y, **movement space min/max from Step 3** |
-| OSC | host/IP, port 8000, empty prefix |
+| Target | MArker CID, Z height, operating limits, initial X/Y, **movement space min/max from Step 3** |
+| Output | host/IP, port 8000, empty prefix |
 | Brightness / zoom | brightness executor page and number (1 and 201 in the example); optional zoom/iris axis and executor (1 and 202); see the last section |
 
 ## Step 10. Test without the joystick (figure 8)
@@ -163,7 +163,7 @@ At 100
 ```
 
    Replace `Group 1` with your group. Leave this in the programmer and continue with Step 6 (store the cue on a Master executor), Step 7 (Programmer Time off) and Step 8 (OSC input). Then come back here.
-4. In the tool, open **Setup → Target / stage**, set **Control** to `pan_tilt`, and enter the **Fixture group**, the attribute names, the pan/tilt limits and the initial pan / tilt. Also fill the brightness executor on **Brightness / zoom** (Step 9) and the OSC host / port. Click **Save settings**.
+4. In the tool, open **Setup → Target**, set **Control** to **Pan / tilt**, and enter the **Fixture group**, the attribute names, the pan/tilt limits and the initial pan / tilt (the MArker fields are hidden in this mode). Set the speed on the **Joystick** page. Also fill the brightness executor on **Brightness / zoom** (Step 9) and the OSC host / port. Click **Save settings**.
 5. Run the figure 8 test (Step 10). In pan/tilt mode the lights should swing in a small figure 8 around the initial pan / tilt, within the limits.
 6. Connect the joystick (Step 11). Pushing the stick right should increase pan and pushing it forward should increase tilt; tick **Invert** beside an axis if a direction is wrong.
 

@@ -1,6 +1,6 @@
 # PSN: moving the MArker without taking the selection
 
-Status: available as an optional output in the app (Setup → OSC → Position output). Verified in onPC 2.5.0.3 with the test sender; not yet checked with the real joystick or a real show. The default output still moves the MArker through OSC (see [GRANDMA3_SETUP.md](GRANDMA3_SETUP.md)). This page records what was found on 2026-10-14 and how to configure both sides. PSN applies only to the marker control mode; pan/tilt control (Setup → Target / stage → Control) is OSC only and opens no PSN stream.
+Status: available as an optional output in the app (Setup → Output → Position output). Verified in onPC 2.5.0.3 with the test sender; not yet checked with the real joystick or a real show. The default output still moves the MArker through OSC (see [GRANDMA3_SETUP.md](GRANDMA3_SETUP.md)). This page records what was found on 2026-10-14 and how to configure both sides. PSN applies only to the marker control mode; pan/tilt control (Setup → Target → Control) is OSC only and opens no PSN stream.
 
 ## Why
 
@@ -44,11 +44,11 @@ Check with `lsof -nP -iUDP:56565` that onPC listens. The System Monitor shows OS
 
 ## Configure the app
 
-1. Stop output and open **Setup → OSC**.
-2. Set **Position output** to `psn`. Leave the PSN tracker ID, multicast group, port and interface at their defaults when onPC runs on this Mac (tracker 1, `236.10.10.10`, `56565`, interface `127.0.0.1`), and match the tracker ID to the PSN row in onPC.
+1. Stop output and open **Setup → Output**.
+2. Set **Position output** to **PSN stream** (saved as `psn`). The PSN fields appear below it; the MArker attribute names, which only OSC commands use, are hidden. Leave the PSN tracker ID, multicast group, port and interface at their defaults when onPC runs on this Mac (tracker 1, `236.10.10.10`, `56565`, interface `127.0.0.1`), and match the tracker ID to the PSN row in onPC.
 3. **Save settings**, then Start. The Live view shows a **Release marker** button while PSN is selected or a stream is open.
 
-What changes in PSN mode: the app no longer sends `ClearSelection; MArker ...`, so your selection and encoders stay free. Brightness, zoom / iris and buttons still go over OSC, so the OSC setup in [GRANDMA3_SETUP.md](GRANDMA3_SETUP.md) is still needed. The MArker is chosen by the PSN row in onPC, so the app's MArker CID and movement space are not used for conversion in PSN mode, but they must still be valid settings.
+What changes in PSN mode: the app no longer sends `ClearSelection; MArker ...`, so your selection and encoders stay free. Brightness, zoom / iris and buttons still go over OSC, so the OSC setup in [GRANDMA3_SETUP.md](GRANDMA3_SETUP.md) is still needed. The MArker is chosen by the PSN row in onPC, so the app's MArker CID and movement space are not used for conversion in PSN mode, but they must still be valid settings. The PSN fields are checked only while PSN is selected, and the MArker attribute names only while OSC commands are selected.
 
 **Stop and Release marker.** PSN has no hold: if packets stop, onPC resets the MArker to 0, 0, 0. So **Stop keeps sending the last position** and the lights stay put; **Release marker** (Live button, or a button mapped to "Release PSN marker") ends the stream, and the MArker then resets to 0, 0, 0. Release marker also stops output if it is running. Closing the window (or Cmd-Q on macOS) asks for confirmation first when a stream is open, because closing ends the stream; Release marker does not ask. A joystick disconnect or an OSC failure stops output but keeps the stream holding.
 
@@ -110,7 +110,7 @@ PSN output is implemented and covered by automated tests only (130 tests on a Tk
 
 ### Operator checks (test show, not yet done)
 
-1. With onPC set up as above and **Position output** = `psn`, run the figure-8 test. The MArker traces a figure 8 while the console selection and the encoder wheels stay untouched.
+1. With onPC set up as above and **Position output** = **PSN stream**, run the figure-8 test. The MArker traces a figure 8 while the console selection and the encoder wheels stay untouched.
 2. Press Stop, then Release marker. The MArker holds after Stop and drops to 0, 0, 0 after Release marker.
 3. Run with the real joystick and confirm OSC brightness, zoom/iris and mapped buttons still work while position goes over PSN.
 4. Pull the joystick cable. Output stops, the MArker holds, and the fault mentions Release marker.

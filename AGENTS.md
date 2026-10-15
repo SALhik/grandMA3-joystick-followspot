@@ -37,7 +37,7 @@ current code and Git state, and preserve unrelated operator changes.
 | File | Responsibility |
 | --- | --- |
 | `followspot.py` | Tkinter window, settings editor, device selection/learning, polling, start/stop lifecycle, diagnostic CLI |
-| `followspot_ui.py` | Native Live/Setup/Diagnostics views, read-only stage/level previews, draft/readiness feedback, field-error navigation and scroll layout, control-mode field states |
+| `followspot_ui.py` | Native Live/Setup/Diagnostics views, read-only stage/level previews, draft/readiness feedback, field-error navigation and scroll layout, sections shown for the active control mode / position output, field states |
 | `followspot_core.py` | Settings validation/persistence, proportional motion, coordinate conversion, OSC encoding/sending, PSN packet encoders and `PsnStreamer` (background 30 Hz PSN sender), the button edge tracker and output controller, pan/tilt motion and group command |
 | `joystick.py` | SDL2 and native macOS HID readers via `ctypes`, normalization and the combined device list |
 | `Launch Followspot.command` | Selects a Tk-capable Python and launches the window |
@@ -116,8 +116,10 @@ failures; never report skipped or blocked hardware checks as passing.
   until the next successful Start (the stream is already closed, so Release marker
   cannot clear it). PSN fields stay editable while a stream
   is held and output is stopped, but `apply_settings` refuses a changed PSN field
-  until Release. Validation does not change with the mode (`marker_id` and the
-  Movement Space still apply even though PSN does not use them for conversion).
+  until Release. Validation follows the active path (see Control mode): with PSN the
+  `psn_*` fields are range-checked and `attribute_x/y/z` are not; with OSC the reverse.
+  `marker_id` and the Movement Space are still checked in PSN mode even though PSN
+  does not use them for conversion.
 - Control mode (`control_mode` = `marker` default or `pan_tilt`). `pan_tilt` is
   OSC only: `Controller` sends `ClearSelection; Group <fixture_group>; Attribute
   "Pan" At Absolute Percent <p>; Attribute "Tilt" At Absolute Percent <t>` only
@@ -127,13 +129,24 @@ failures; never report skipped or blocked hardware checks as passing.
   the active mode is stepped, and Save/apply carries and clamps both. `axis_x`
   drives pan and `axis_y` tilt with the existing centre, dead zone and inversion;
   speed is `pan_tilt_speed` percentage points per second with the same
-  `MAX_STEP` cap. `position_output` and the `psn_*` fields are saved and
-  validated but ignored in this mode, and validation never depends on the mode.
+  `MAX_STEP` cap. Only the active path is range-checked:
+  `followspot_core.inactive_fields(control_mode, position_output)` names the
+  settings of the other control mode and the other position output
+  (`MARKER_FIELDS`, `PAN_TILT_FIELDS`, `OSC_POSITION_FIELDS`, `PSN_POSITION_FIELDS`).
+  They are still saved, type-checked and parsed from the window (a non-number
+  cannot be saved), so an inactive value may be out of range until its path is
+  selected; code must not use inactive fields. Switching back re-validates them.
   `control_mode` is in `PSN_FIELDS`, so it cannot change while a PSN stream is
-  held. In Setup the draft selector (`app.values['control_mode']`) decides which
-  editors are enabled (`FollowspotView.apply_field_states`, recomputed in
-  `refresh`, never stored as the widget's base state); Live follows the applied
-  settings.
+  held. In Setup the draft selectors (`app.values['control_mode']` and
+  `['position_output']`) decide which sections are shown
+  (`FollowspotView.apply_sections`, called from `apply_field_states` in `refresh`);
+  the hidden fields equal `inactive_fields` (a real Tk test pins this). Editors are
+  disabled only while running, for a loaded local button action, or for zoom/iris
+  while the draft leaves it off (zoom/iris is still validated); states are recomputed
+  in `refresh`, never stored as the widget's base state. The selectors show labels
+  (MArker / Pan / tilt, OSC commands / PSN stream) and store the raw values.
+  `show_error` names the selector to switch for an error in a hidden field. Live
+  follows the applied settings.
 - Test mode (`Controller.start(test=True)`) needs no joystick: a figure 8 around the initial X/Y (`figure_eight`) or, in pan/tilt mode, the initial pan/tilt (`figure_eight_pan_tilt`) and fixed `test_brightness`. `poll` skips joystick reads and button processing while a test runs; failures stop output like normal.
 - Settings changes require stopped output. Release commands must be attempted
   before closing the sender, and release failures must remain visible.
@@ -260,11 +273,18 @@ direction, how fixtures that followed a MArker behave after a mode switch, and
 the Setup / Live layout in the real window. See docs/GRANDMA3_SETUP.md,
 Optional: pan/tilt control, for the operator checklist.
 
+Also on 2026-10-15 (branch `feat/conditional-setup-sections`), Setup was reorganised:
+tabs Target and Output (was Target / stage and OSC), only the active control mode's and
+position output's sections are shown, one speed / figure-8 size row switches with the
+mode, zoom/iris editors are disabled while it is off, and the selectors show labels.
+Validation now skips the inactive path (see Control mode). Covered by automated tests
+only; the real window layout has not been checked visually by the operator.
+
 Known minor issues in the pan/tilt work (found in review, not fixed):
 
 - A full-suite run once printed three Tk `invalid command name ...<lambda>` lines.
   `show_error` queues `after_idle(reveal)`, and
-  `test_error_in_a_disabled_field_says_how_to_reach_it` can end without draining
+  `test_error_in_a_hidden_or_disabled_field_says_how_to_reach_it` can end without draining
   idle events. It is test noise, was not reproduced in later runs and is not a
   product fault. Fix: `update_idletasks()` in the test or a `winfo_exists` guard
   in `reveal`.
@@ -290,10 +310,8 @@ Known minor issues in the pan/tilt work (found in review, not fixed):
   wording of some docs text; leave it.
 - Design choices, not defects: Start sends the displayed pan/tilt to the whole
   group at full speed (first use snaps to 50 / 50); one group and one pan/tilt
-  pair for all fixtures (no per-fixture values); fields for the other control mode
-  are disabled, not hidden; the Diagnostics labels are static; the Control
-  selector shows the literal values `marker` and `pan_tilt`; a settings file
-  saved by this version is refused by an older checkout.
+  pair for all fixtures (no per-fixture values); a settings file saved by this
+  version is refused by an older checkout.
 
 Automated coverage: core motion/configuration/OSC-packet tests, simulated SDL
 input/disconnect, native HID discovery and combined-list tests with doubles,
@@ -301,7 +319,7 @@ PSN encoder (pinned bytes), streamer (injected sockets; one real socket open, no
 received by a real listener) and controller tests, headless window lifecycle tests (including
 zoom/iris, test mode and PSN stream hold/release/close, faults and button priority), real Tk
 workflow tests, pan/tilt coverage in each layer (core motion, validation and OSC-string tests;
-headless window tests; real Tk tests for the Control selector, greyed fields, captions and error labels), and a visible startup test with the real backend. Tk tests skip
+headless window tests; real Tk tests for the selectors, hidden sections matching `inactive_fields`, captions and error labels), and a visible startup test with the real backend. Tk tests skip
 when Tk is missing or cannot open a window. The
 Windows launcher has no automated coverage. MA's installed 2.5 system tests
 confirm the `XYZ_X`, `XYZ_Y`, `XYZ_Z`, and `XYZ_MArker` attribute names.
