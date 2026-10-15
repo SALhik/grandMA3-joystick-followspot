@@ -50,5 +50,17 @@
   "psn_group": "236.10.10.10",
   "psn_port": 56565,
   "psn_interface": "127.0.0.1",
+  "control_mode": "marker",
+  "fixture_group": 1,
+  "attribute_pan": "Pan",
+  "attribute_tilt": "Tilt",
+  "pan_tilt_speed": 25.0,
+  "pan_min": 0.0,
+  "pan_max": 100.0,
+  "tilt_min": 0.0,
+  "tilt_max": 100.0,
+  "initial_pan": 50.0,
+  "initial_tilt": 50.0,
+  "test_pan_tilt_size": 10.0,
   "buttons": {}
 }

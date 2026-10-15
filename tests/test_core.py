@@ -499,5 +499,51 @@ class PsnControllerTests(unittest.TestCase):
         self.assertTrue(sent[0][1].startswith('ClearSelection; MArker 1;'))
 
 
+class PanTiltSettingsTests(unittest.TestCase):
+    def test_old_settings_default_to_marker_control(self):
+        s = core.Settings.from_dict({'port': 8001})
+        self.assertEqual((s.control_mode, s.fixture_group, s.attribute_pan, s.attribute_tilt),
+                         ('marker', 1, 'Pan', 'Tilt'))
+        self.assertEqual((s.pan_tilt_speed, s.pan_min, s.pan_max, s.tilt_min, s.tilt_max),
+                         (25.0, 0.0, 100.0, 0.0, 100.0))
+        self.assertEqual((s.initial_pan, s.initial_tilt, s.test_pan_tilt_size), (50.0, 50.0, 10.0))
+
+    def test_invalid_pan_tilt_values_name_their_field(self):
+        cases = (({'control_mode': 'zoom'}, 'control_mode'),
+                 ({'fixture_group': 0}, 'fixture_group'),
+                 ({'fixture_group': 1.5}, 'fixture_group'),
+                 ({'attribute_pan': 'Pan Tilt'}, 'attribute_pan'),
+                 ({'attribute_tilt': ''}, 'attribute_tilt'),
+                 ({'pan_tilt_speed': 0}, 'pan_tilt_speed'),
+                 ({'pan_tilt_speed': 1001}, 'pan_tilt_speed'),
+                 ({'pan_min': -1}, 'pan_min'),
+                 ({'pan_max': 101}, 'pan_max'),
+                 ({'pan_min': 60, 'pan_max': 60}, 'pan_min'),
+                 ({'pan_min': 60}, 'initial_pan'),
+                 ({'tilt_max': 40}, 'initial_tilt'),
+                 ({'test_pan_tilt_size': 0}, 'test_pan_tilt_size'),
+                 ({'test_pan_tilt_size': 51}, 'test_pan_tilt_size'))
+        for changes, field in cases:
+            with self.subTest(changes=changes):
+                with self.assertRaises(core.SettingsError) as caught:
+                    core.Settings.from_dict(dict(core.Settings().to_dict(), **changes))
+                self.assertIn(field, caught.exception.fields)
+
+    def test_pan_tilt_values_are_validated_even_in_marker_mode(self):
+        with self.assertRaises(core.SettingsError):
+            core.Settings.from_dict(dict(core.Settings().to_dict(), control_mode='marker', pan_min=60))
+
+    def test_pan_tilt_settings_roundtrip(self):
+        s = core.Settings.from_dict(dict(core.Settings().to_dict(), control_mode='pan_tilt', fixture_group=4,
+                                         attribute_pan='Pan2', pan_min=10, pan_max=90, initial_pan=20))
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'settings.json'
+            s.save(path)
+            self.assertEqual(core.Settings.load(path).to_dict(), s.to_dict())
+
+    def test_control_mode_is_guarded_while_a_psn_stream_is_held(self):
+        self.assertIn('control_mode', core.PSN_FIELDS)
+
+
 if __name__ == '__main__':
     unittest.main()

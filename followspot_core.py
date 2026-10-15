@@ -18,7 +18,7 @@ MAX_STEP = 0.25
 BUTTON_ACTIONS = {'command': 'MA command', 'start': 'Start output',
                   'stop': 'Stop output', 'toggle': 'Toggle output',
                   'reset': 'Reset target', 'release_marker': 'Release PSN marker'}
-PSN_FIELDS = ('position_output', 'psn_tracker_id', 'psn_group', 'psn_port', 'psn_interface')
+PSN_FIELDS = ('control_mode', 'position_output', 'psn_tracker_id', 'psn_group', 'psn_port', 'psn_interface')
 
 
 def clamp(value, low, high):
@@ -85,6 +85,18 @@ class Settings:
     psn_group: str = '236.10.10.10'
     psn_port: int = 56565
     psn_interface: str = '127.0.0.1'
+    control_mode: str = 'marker'
+    fixture_group: int = 1
+    attribute_pan: str = 'Pan'
+    attribute_tilt: str = 'Tilt'
+    pan_tilt_speed: float = 25.0
+    pan_min: float = 0.0
+    pan_max: float = 100.0
+    tilt_min: float = 0.0
+    tilt_max: float = 100.0
+    initial_pan: float = 50.0
+    initial_tilt: float = 50.0
+    test_pan_tilt_size: float = 10.0
     buttons: dict = field(default_factory=dict)
 
     def to_dict(self):
@@ -156,6 +168,19 @@ class Settings:
             raise SettingsError('OSC port must be 1–65535.', 'port')
         if self.position_output not in ('osc', 'psn'):
             raise SettingsError('Position output must be osc or psn.', 'position_output')
+        if self.control_mode not in ('marker', 'pan_tilt'):
+            raise SettingsError('Control mode must be marker or pan_tilt.', 'control_mode')
+        if self.fixture_group < 1:
+            raise SettingsError('Fixture group must be positive.', 'fixture_group')
+        if not 0 < self.pan_tilt_speed <= 1000:
+            raise SettingsError('Pan/tilt speed must be greater than 0 and at most 1000 percentage points/s.', 'pan_tilt_speed')
+        for axis in ('pan', 'tilt'):
+            lo, hi, initial = getattr(self, f'{axis}_min'), getattr(self, f'{axis}_max'), getattr(self, f'initial_{axis}')
+            if not 0 <= lo < hi <= 100 or not lo <= initial <= hi:
+                raise SettingsError(f'{axis.capitalize()} limits must be 0-100 with the minimum below the maximum, and contain the initial value.',
+                                    f'{axis}_min', f'{axis}_max', f'initial_{axis}')
+        if not 0 < self.test_pan_tilt_size <= 50:
+            raise SettingsError('Pan/tilt test size must be greater than 0 and at most 50 percentage points.', 'test_pan_tilt_size')
         if not 1 <= self.psn_tracker_id <= 65535:
             raise SettingsError('PSN tracker ID must be 1–65535.', 'psn_tracker_id')
         if not 1 <= self.psn_port <= 65535:
@@ -174,7 +199,7 @@ class Settings:
             raise SettingsError('OSC host must be an IP address or hostname without spaces.', 'host')
         if self.prefix and not re.fullmatch(r'[A-Za-z0-9_.-]+', self.prefix):
             raise SettingsError('OSC prefix must contain only letters, numbers, dot, underscore or hyphen, without slashes.', 'prefix')
-        for key in ('attribute_x', 'attribute_y', 'attribute_z'):
+        for key in ('attribute_x', 'attribute_y', 'attribute_z', 'attribute_pan', 'attribute_tilt'):
             if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*', getattr(self, key)):
                 raise SettingsError('Use a valid MA attribute library name.', key)
         if not isinstance(self.buttons, dict):
