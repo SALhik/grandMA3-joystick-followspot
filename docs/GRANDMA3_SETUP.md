@@ -148,6 +148,20 @@ Do this after the brightness executor works. The tool controls only a fader leve
 
 Check: a figure-8 test with the axis enabled sends the initial zoom/iris level once but does not move it, because the joystick is ignored in a test. Confirm zoom/iris movement with the joystick.
 
+## Optional: pan/tilt control
+
+Use this instead of Steps 2-5 when you want the stick to drive pan and tilt directly rather than a MArker. Brightness (Step 6), OSC (Step 8) and the optional zoom / iris executor are still needed.
+
+1. Make a group that contains exactly the fixtures to move, and note its number (for example Group 1). All fixtures in the group receive the same pan and tilt percentage.
+2. Run `List Attribute` and confirm the pan and tilt attribute names in your fixture library (normally `Pan` and `Tilt`).
+3. In the tool, open **Setup → Target / stage**, set **Control** to `pan_tilt`, and enter the **Fixture group**, the attribute names, the pan/tilt limits and the initial pan / tilt. Click **Save settings**.
+4. Run the figure 8 test (Step 10). In pan/tilt mode the lights should swing in a small figure 8 around the initial pan / tilt, within the limits.
+5. Connect the joystick (Step 11). Pushing the stick right should increase pan and pushing it forward should increase tilt; tick **Invert** beside an axis if a direction is wrong.
+
+Each update sends `ClearSelection; Group <n>; Attribute "Pan" At Absolute Percent <p>; Attribute "Tilt" At Absolute Percent <t>`. The installed MA 2.5 files support the pieces: `resource/attribute_definitions.xml` defines `Pan` and `Tilt` with a physical (degree) readout, which is why the command uses `At Absolute Percent`; the system tests use `Attribute 'Pan' At Relative Percent 10` and select a group by name followed by a semicolon. That OSC accepts this exact string and moves the lights is **not yet confirmed**.
+
+Check on a test show, and tell the maintainers what you see: the lights move; 0-100% covers the fixture's full pan/tilt range; the default tilt direction; what happens to fixtures that were following a MArker when you switch modes; and whether the encoder wheels really are unusable while output runs.
+
 ## References
 
 MA's help: [XYZ activation](https://help.malighting.com/grandMA3/2.5/HTML/xyz_activate.html), [MArkers](https://help.malighting.com/grandMA3/2.5/HTML/xyz_marker.html), [stages and spaces](https://help.malighting.com/grandMA3/2.5/HTML/patch_stage.html), [OSC](https://help.malighting.com/grandMA3/2.5/HTML/remote_inputs_osc.html), [Percent input](https://help.malighting.com/grandMA3/2.5/HTML/keyword_percent_word.html).

@@ -1,6 +1,6 @@
 # PSN: moving the MArker without taking the selection
 
-Status: available as an optional output in the app (Setup → OSC → Position output). Verified in onPC 2.5.0.3 with the test sender; not yet checked with the real joystick or a real show. The default output still moves the MArker through OSC (see [GRANDMA3_SETUP.md](GRANDMA3_SETUP.md)). This page records what was found on 2026-10-14 and how to configure both sides.
+Status: available as an optional output in the app (Setup → OSC → Position output). Verified in onPC 2.5.0.3 with the test sender; not yet checked with the real joystick or a real show. The default output still moves the MArker through OSC (see [GRANDMA3_SETUP.md](GRANDMA3_SETUP.md)). This page records what was found on 2026-10-14 and how to configure both sides. PSN applies only to the marker control mode; pan/tilt control (Setup → Target / stage → Control) is OSC only and opens no PSN stream.
 
 ## Why
 
