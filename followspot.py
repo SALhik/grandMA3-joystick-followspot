@@ -230,8 +230,9 @@ class App:
             if self.view.mapping_pending():
                 raise SettingsError('Add / update the button mapping or discard editor changes before saving.', 'buttons')
             settings = settings_from_values(self.values, self.draft_buttons)
-            if self.streamer is not None and any(getattr(settings, key) != getattr(self.settings, key) for key in PSN_FIELDS):
-                raise SettingsError('Release the PSN marker before changing control mode, position output or PSN settings.', *PSN_FIELDS)
+            changed = [key for key in PSN_FIELDS if getattr(settings, key) != getattr(self.settings, key)]
+            if self.streamer is not None and changed:
+                raise SettingsError('Release the PSN marker before changing control mode, position output or PSN settings.', *changed)
             settings.save(self.settings_path)
         except (OSError, ValueError) as exc:
             self.view.show_error(exc)

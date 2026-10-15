@@ -614,6 +614,20 @@ class PsnWindowTests(unittest.TestCase):
         self.assertTrue(app.apply_settings())
         self.assertEqual(app.settings.psn_port, 56570)
 
+    def test_psn_guard_error_names_only_the_changed_fields(self):
+        app, _ = self.app(position_output='psn')
+        shown = []
+        app.view.show_error = shown.append
+        app.start_output()
+        app.stop_output()
+        app.values['psn_port'].set('56570')
+        self.assertFalse(app.apply_settings())
+        self.assertEqual(shown[-1].fields, ('psn_port',))
+        app.values['psn_port'].set('56565')
+        app.values['control_mode'].set('pan_tilt')
+        self.assertFalse(app.apply_settings())
+        self.assertEqual(shown[-1].fields, ('control_mode',))
+
     def test_joystick_loss_holds_the_stream_and_says_so(self):
         app, _ = self.app(position_output='psn')
         app.start_output()
@@ -1037,14 +1051,23 @@ with tempfile.TemporaryDirectory() as folder:
         app.values['control_mode'].set('pan_tilt')
         app.values['marker_id'].set('0')
         self.assertFalse(app.apply_settings())
-        self.assertIn('Switch Control to Marker', app.status.get())
+        self.assertIn('Switch Control to marker', app.status.get())
         app.values['marker_id'].set('1')
         app.values['pan_min'].set('-5')
         self.assertFalse(app.apply_settings())
         self.assertNotIn('Switch Control', app.status.get())
         app.values['control_mode'].set('marker')
         self.assertFalse(app.apply_settings())
-        self.assertIn('Switch Control to Pan-tilt', app.status.get())
+        self.assertIn('Switch Control to pan_tilt', app.status.get())
+
+    def test_axis_error_label_follows_the_draft_control_mode(self):
+        app = self.open_app()
+        app.values['axis_x'].set('abc')
+        self.assertFalse(app.apply_settings())
+        self.assertIn('Left / right axis:', app.status.get())
+        app.values['control_mode'].set('pan_tilt')
+        self.assertFalse(app.apply_settings())
+        self.assertIn('Pan (left / right) axis:', app.status.get())
 
     def test_pan_tilt_summary_has_no_psn_and_the_release_button_is_hidden(self):
         app = self.open_app(control_mode='pan_tilt', position_output='psn')

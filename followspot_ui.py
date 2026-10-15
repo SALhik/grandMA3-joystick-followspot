@@ -550,11 +550,14 @@ class FollowspotView:
             if current != state:
                 widget.configure(state=state)
                 self.field_states[widget] = state
-        index = 1 if self.app.values['control_mode'].get() == 'pan_tilt' else 0
+        index = self.mode_index()
         for key, texts in AXIS_CAPTIONS.items():
             if self.caption_texts.get(key) != texts[index]:
                 self.field_captions[key].configure(text=texts[index])
                 self.caption_texts[key] = texts[index]
+
+    def mode_index(self):
+        return 1 if self.app.values['control_mode'].get() == 'pan_tilt' else 0
 
     def set_running(self, running):
         # refresh() recomputes every editor's state from controller.active and the draft mode.
@@ -588,10 +591,10 @@ class FollowspotView:
                 widget = self.fields[key]
                 widget.focus_set()
                 self.app.root.after_idle(lambda: self.reveal(body, widget))
-            label = self.field_labels.get(key, 'Button mapping')
+            label = AXIS_CAPTIONS[key][self.mode_index()] if key in AXIS_CAPTIONS else self.field_labels.get(key, 'Button mapping')
             text = f'{label}: {error}'
             if key and self.fields[key] in self.inapplicable_widgets():
-                text += f' Switch Control to {"Pan-tilt" if key in PAN_TILT_FIELDS else "Marker"} to correct it.'
+                text += f' Switch Control to {"pan_tilt" if key in PAN_TILT_FIELDS else "marker"} to correct it.'
             self.app.status.set(text)
 
     def reveal(self, body, widget):
