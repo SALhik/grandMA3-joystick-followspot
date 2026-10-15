@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 import followspot
-from followspot_core import ButtonEdges, Controller, Settings, pan_tilt_commands
+from followspot_core import BUTTON_ACTIONS, ButtonEdges, Controller, Settings, pan_tilt_commands
 
 
 class Value:
@@ -1001,6 +1001,27 @@ with tempfile.TemporaryDirectory() as folder:
         self.assertEqual(state('marker_id'), 'disabled')
         self.assertEqual(state('pan_min'), 'normal')
         self.assertEqual(state('host'), 'normal')
+
+    def test_local_action_keeps_command_fields_disabled_across_start_and_stop(self):
+        app = self.open_app(buttons={'0': {'action': 'reset'}})
+        app.button_table.selection_set('0')
+        app.load_button()
+        state = lambda widget: str(widget['state'])
+        self.assertEqual(state(app.press_entry), 'disabled')
+        app.start_output()
+        self.assertEqual(state(app.press_entry), 'disabled')
+        app.stop_output()
+        self.assertEqual(state(app.press_entry), 'disabled')
+        self.assertEqual(state(app.release_entry), 'disabled')
+        app.button_action.set(BUTTON_ACTIONS['command'])
+        app.update_button_editor()
+        self.assertEqual(state(app.press_entry), 'normal')
+        app.start_output()
+        app.stop_output()
+        self.assertEqual(state(app.press_entry), 'normal')
+        app.button_action.set(BUTTON_ACTIONS['reset'])
+        app.update_button_editor()
+        self.assertEqual(state(app.press_entry), 'disabled')
 
     def test_axis_captions_follow_the_draft_control_mode(self):
         app = self.open_app()

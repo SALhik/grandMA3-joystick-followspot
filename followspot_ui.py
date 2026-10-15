@@ -536,12 +536,18 @@ class FollowspotView:
         return {self.fields[key] for key in keys if key in self.fields}
 
     def apply_field_states(self):
-        """Disabled = output running, or the field belongs to the other control mode."""
+        """Disabled = output running, the field belongs to the other control mode, or a local button action is loaded."""
         running = self.app.controller.active
         inapplicable = self.inapplicable_widgets()
+        if self.app.button_action.get() != BUTTON_ACTIONS['command']:
+            # Local actions cannot carry MA commands, whatever the run state.
+            inapplicable |= {self.app.press_entry, self.app.release_entry}
+        # update_button_editor also writes these two, so the cache cannot be trusted for them.
+        written_elsewhere = {self.app.press_entry, self.app.release_entry}
         for widget, base in self.editable:
             state = 'disabled' if running or widget in inapplicable else base
-            if self.field_states.get(widget) != state:
+            current = str(widget.cget('state')) if widget in written_elsewhere else self.field_states.get(widget)
+            if current != state:
                 widget.configure(state=state)
                 self.field_states[widget] = state
         index = 1 if self.app.values['control_mode'].get() == 'pan_tilt' else 0
