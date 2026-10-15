@@ -980,6 +980,87 @@ with tempfile.TemporaryDirectory() as folder:
         app.stop_output()
         self.assertEqual(str(app.view.fields['host']['state']), 'normal')
 
+    def test_control_mode_disables_the_other_modes_fields_and_stop_keeps_them_disabled(self):
+        app = self.open_app()
+        state = lambda key: str(app.view.fields[key]['state'])
+        self.assertEqual(state('marker_id'), 'normal')
+        self.assertEqual(state('position_output'), 'readonly')
+        self.assertEqual(state('pan_min'), 'disabled')
+        self.assertEqual(state('control_mode'), 'readonly')
+        app.values['control_mode'].set('pan_tilt')
+        self.assertEqual(state('marker_id'), 'disabled')
+        self.assertEqual(state('max_speed'), 'disabled')
+        self.assertEqual(state('test_size'), 'disabled')
+        self.assertEqual(state('position_output'), 'disabled')
+        self.assertEqual(state('pan_min'), 'normal')
+        self.assertEqual(state('test_pan_tilt_size'), 'normal')
+        self.assertEqual(state('host'), 'normal')
+        app.start_output()
+        self.assertEqual(state('pan_min'), 'disabled')
+        app.stop_output()
+        self.assertEqual(state('marker_id'), 'disabled')
+        self.assertEqual(state('pan_min'), 'normal')
+        self.assertEqual(state('host'), 'normal')
+
+    def test_axis_captions_follow_the_draft_control_mode(self):
+        app = self.open_app()
+        caption = app.view.field_captions['axis_x']
+        self.assertEqual(str(caption.cget('text')), 'Left / right axis')
+        app.values['control_mode'].set('pan_tilt')
+        self.assertEqual(str(caption.cget('text')), 'Pan (left / right) axis')
+        app.values['control_mode'].set('marker')
+        self.assertEqual(str(caption.cget('text')), 'Left / right axis')
+
+    def test_error_in_a_disabled_field_says_how_to_reach_it(self):
+        app = self.open_app()
+        app.values['control_mode'].set('pan_tilt')
+        app.values['marker_id'].set('0')
+        self.assertFalse(app.apply_settings())
+        self.assertIn('Switch Control to Marker', app.status.get())
+        app.values['marker_id'].set('1')
+        app.values['pan_min'].set('-5')
+        self.assertFalse(app.apply_settings())
+        self.assertNotIn('Switch Control', app.status.get())
+        app.values['control_mode'].set('marker')
+        self.assertFalse(app.apply_settings())
+        self.assertIn('Switch Control to Pan-tilt', app.status.get())
+
+    def test_pan_tilt_summary_has_no_psn_and_the_release_button_is_hidden(self):
+        app = self.open_app(control_mode='pan_tilt', position_output='psn')
+        app.view.refresh()
+        self.assertIn('Group 1', app.view.summary.get())
+        self.assertNotIn('PSN', app.view.summary.get())
+        self.assertNotIn('MArker', app.view.summary.get())
+        self.assertFalse(app.release_button.winfo_manager())
+
+    def test_marker_summary_and_release_button_are_unchanged(self):
+        app = self.open_app(position_output='psn')
+        app.view.refresh()
+        self.assertIn('MArker 1', app.view.summary.get())
+        self.assertIn('PSN', app.view.summary.get())
+        self.assertTrue(app.release_button.winfo_manager())
+
+    def test_live_view_draws_a_pan_tilt_square(self):
+        app = self.open_app(control_mode='pan_tilt', pan_min=10.0, pan_max=90.0)
+        app.update_position()
+        self.assertEqual(app.position_label.get(), 'Pan 50.0%   Tilt 50.0%')
+        self.assertEqual(app.view.stage_title.get(), 'Pan / tilt')
+        canvas = app.view.stage
+        texts = [canvas.itemcget(item, 'text') for item in canvas.find_all() if canvas.type(item) == 'text']
+        self.assertIn('Tilt 100%', texts)
+        self.assertIn('Pan\n10%', texts)
+        self.assertTrue(canvas.find_withtag('target'))
+        self.assertFalse(canvas.find_withtag('held'))
+
+    def test_marker_live_view_keeps_its_title_and_labels(self):
+        app = self.open_app()
+        app.update_position()
+        self.assertEqual(app.view.stage_title.get(), 'Tracked target · top view')
+        canvas = app.view.stage
+        texts = [canvas.itemcget(item, 'text') for item in canvas.find_all() if canvas.type(item) == 'text']
+        self.assertIn('Y 10 m', texts)
+        self.assertIn('X\n-10 m', texts)
+
     def test_readiness_disables_start_without_blocking_joystick_free_test(self):
         app = self.open_app()
         app.joystick.close()
