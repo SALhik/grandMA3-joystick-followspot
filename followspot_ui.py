@@ -1,6 +1,6 @@
 """Native Tk presentation; input, output and persistence stay in followspot.App."""
 from decimal import Decimal
-from followspot_core import BUTTON_ACTIONS, Motion, clamp
+from followspot_core import BUTTON_ACTIONS, PAN_TILT_FIELDS, PSN_POSITION_FIELDS, Motion, clamp, inactive_fields
 
 
 PERCENT_FIELDS = {'dead_zone', 'zoom_dead_zone'}
@@ -19,12 +19,12 @@ def axis_name(key, control_mode):
 
 AXIS_CAPTIONS = {'axis_x': ('Left / right axis', 'Pan (left / right) axis'),
                  'axis_y': ('Upstage / downstage axis', 'Tilt (up / down) axis')}
-MARKER_FIELDS = ('marker_id', 'z', 'x_min', 'x_max', 'y_min', 'y_max', 'initial_x', 'initial_y',
-                 'space_x_min', 'space_x_max', 'space_y_min', 'space_y_max', 'space_z_min', 'space_z_max',
-                 'attribute_x', 'attribute_y', 'attribute_z', 'max_speed', 'position_output',
-                 'psn_tracker_id', 'psn_group', 'psn_port', 'psn_interface', 'test_size')
-PAN_TILT_FIELDS = ('fixture_group', 'attribute_pan', 'attribute_tilt', 'pan_tilt_speed', 'pan_min', 'pan_max',
-                   'tilt_min', 'tilt_max', 'initial_pan', 'initial_tilt', 'test_pan_tilt_size')
+# Rows whose caption is shared by a marker editor and its pan/tilt twin (marker key first).
+ROW_CAPTIONS = {'max_speed': ('Maximum speed (m/s)', 'Maximum speed (% points/s)'),
+                'test_size': ('Figure 8 half-width, marker (m)', 'Figure 8 half-swing, pan/tilt (% points)')}
+# Selectors show these labels; settings keep the raw values.
+CHOICE_LABELS = {'control_mode': {'marker': 'MArker', 'pan_tilt': 'Pan / tilt'},
+                 'position_output': {'osc': 'OSC commands', 'psn': 'PSN stream'}}
 
 
 def display_value(key, value):
@@ -38,6 +38,10 @@ class FollowspotView:
         self.app, self.tk, self.ttk = app, tk, ttk
         self.fields, self.field_pages, self.field_labels = {}, {}, {}
         self.field_captions = {}
+        # Widgets of the control-mode / position-output sections; refresh shows only the active ones.
+        self.sections = {'marker': [], 'pan_tilt': [], 'osc_position': [], 'psn_position': []}
+        self.section_shown = {}
+        self.zoom_widgets = set()
         self.editable, self.advanced, self.axis_feedback, self.axis_inputs = [], {}, {}, {}
         self.wrapping = []
         self.page_layouts = []
@@ -98,13 +102,34 @@ class FollowspotView:
         self.field_pages[key] = self.current_page
         return widget
 
-    def choice(self, parent, row, label, key, values):
+    def twin(self, parent, row, label, key, of):
+        """A pan/tilt editor in the same cell as the marker editor `of`; only one is shown, under a shared caption."""
+        widget = self.edit(self.ttk.Entry(parent, textvariable=self.app.values[key], width=18))
+        widget.grid(row=row, column=1, sticky='w', pady=5)
+        self.fields[key], self.field_labels[key], self.field_pages[key] = widget, label, self.current_page
+        self.field_captions[key] = self.field_captions[of]
+        self.sections['marker'].append(self.fields[of])
+        self.sections['pan_tilt'].append(widget)
+
+    def rows(self, parent, first, last):
+        return [widget for row in range(first, last + 1) for widget in parent.grid_slaves(row=row)]
+
+    def choice(self, parent, row, label, key):
         caption = self.ttk.Label(parent, text=label)
         caption.grid(row=row, column=0, sticky='w', padx=(0, 16), pady=5)
         self.field_captions[key] = caption
-        box = self.edit(self.ttk.Combobox(parent, textvariable=self.app.values[key], values=values,
-                                          state='readonly', width=10), 'readonly')
+        labels, raw = CHOICE_LABELS[key], self.app.values[key]
+        shown = self.tk.StringVar()
+        box = self.edit(self.ttk.Combobox(parent, textvariable=shown, values=list(labels.values()),
+                                          state='readonly', width=14), 'readonly')
         box.grid(row=row, column=1, sticky='w', pady=5)
+        def chosen(event=None):
+            raw.set(next(value for value, text in labels.items() if text == shown.get()))
+        def sync(*args):
+            shown.set(labels.get(raw.get(), raw.get()))
+        box.bind('<<ComboboxSelected>>', chosen)
+        raw.trace_add('write', sync)
+        sync()
         self.fields[key] = box
         self.field_labels[key] = label
         self.field_pages[key] = self.current_page
@@ -166,12 +191,12 @@ class FollowspotView:
         self.setup_tabs.pack(fill='both', expand=True)
         controls = self.page(self.setup_tabs, 'Joystick')
         self.build_controls(controls)
-        target = self.page(self.setup_tabs, 'Target / stage')
+        target = self.page(self.setup_tabs, 'Target')
         self.build_target(target)
         levels = self.page(self.setup_tabs, 'Brightness / zoom')
         self.build_levels(levels)
-        network = self.page(self.setup_tabs, 'OSC')
-        self.build_network(network)
+        output = self.page(self.setup_tabs, 'Output')
+        self.build_output(output)
         mappings = self.page(self.setup_tabs, 'Buttons')
         self.mapping_page = self.current_page
         self.build_mappings(mappings)
@@ -257,14 +282,15 @@ class FollowspotView:
                                       (8, 'Brightness slider axis', 'axis_slider', 'invert_slider')]:
             self.axis_row(parent, row, label, key, invert)
         self.entry(parent, 11, 'Maximum speed (m/s)', 'max_speed')
+        self.twin(parent, 11, 'Maximum speed (% points/s)', 'pan_tilt_speed', 'max_speed')
         self.entry(parent, 12, 'Centre dead zone (%)', 'dead_zone')
         self.edit(ttk.Button(parent, text='Calibrate stick centre', command=app.calibrate)).grid(row=13, column=0, sticky='w', pady=8)
         self.label(parent, text='Release the stick before calibrating. Learn one control at a time; axis numbers start at 0. Input previews use the draft mappings.').grid(row=14, column=0, columnspan=4, sticky='w', pady=4)
         self.advanced_fields(parent, 15, [('centre_x', 'X centre offset'), ('centre_y', 'Y centre offset')])
 
     def build_target(self, parent):
-        self.choice(parent, 0, 'Control', 'control_mode', ['marker', 'pan_tilt'])
-        self.label(parent, text='marker moves one MArker and onPC aims the fixtures at it. pan_tilt drives the pan and tilt of one fixture group directly, over OSC only.').grid(row=1, column=0, columnspan=4, sticky='w', pady=(0, 8))
+        self.choice(parent, 0, 'Control', 'control_mode')
+        self.label(parent, text='MArker moves one MArker and onPC aims the fixtures at it. Pan / tilt drives one fixture group directly over OSC. Only the selected mode’s settings are shown and checked.').grid(row=1, column=0, columnspan=4, sticky='w', pady=(0, 8))
         self.entry(parent, 2, 'MArker CID', 'marker_id')
         self.entry(parent, 3, 'Z height (m)', 'z')
         self.ttk.Label(parent, text='Operating limits and initial target (m)').grid(row=4, column=0, columnspan=4, sticky='w', pady=(12, 4))
@@ -284,16 +310,17 @@ class FollowspotView:
             self.field_labels[key] = axis.upper() + ' movement space maximum'
             self.field_captions[key] = caption
         self.label(parent, text='Operating limits fit inside the movement space. Defaults are examples; confirm the actual movement space in onPC.').grid(row=15, column=0, columnspan=4, sticky='w', pady=12)
-        self.ttk.Label(parent, text='Pan / tilt (% of the fixture range)', font=self.state_font).grid(row=16, column=0, columnspan=4, sticky='w', pady=(20, 4))
+        self.sections['marker'] += self.rows(parent, 2, 15)
+        self.ttk.Label(parent, text='Pan / tilt (% of the fixture range)').grid(row=16, column=0, columnspan=4, sticky='w', pady=(12, 4))
         self.entry(parent, 17, 'Fixture group', 'fixture_group')
         self.entry(parent, 18, 'Pan attribute', 'attribute_pan')
         self.entry(parent, 19, 'Tilt attribute', 'attribute_tilt')
-        self.entry(parent, 20, 'Maximum speed (% points/s)', 'pan_tilt_speed')
         for row, (key, label) in enumerate([('pan_min', 'Pan minimum (%)'), ('pan_max', 'Pan maximum (%)'),
                                           ('tilt_min', 'Tilt minimum (%)'), ('tilt_max', 'Tilt maximum (%)'),
-                                          ('initial_pan', 'Initial / reset pan (%)'), ('initial_tilt', 'Initial / reset tilt (%)')], 21):
+                                          ('initial_pan', 'Initial / reset pan (%)'), ('initial_tilt', 'Initial / reset tilt (%)')], 20):
             self.entry(parent, row, label, key)
-        self.label(parent, text='Pan/tilt output selects the group, then sets Pan and Tilt as absolute percent, so it takes the console selection while output runs. Limits keep the lights inside a safe range. Confirm the attribute names with List Attribute in onPC.').grid(row=27, column=0, columnspan=4, sticky='w', pady=12)
+        self.label(parent, text='Pan/tilt output selects the group, then sets Pan and Tilt as absolute percent, so it takes the console selection while output runs. Limits keep the lights inside a safe range. Confirm the attribute names with List Attribute in onPC.').grid(row=26, column=0, columnspan=4, sticky='w', pady=12)
+        self.sections['pan_tilt'] += self.rows(parent, 16, 26)
 
     def build_levels(self, parent):
         app, ttk = self.app, self.ttk
@@ -301,36 +328,41 @@ class FollowspotView:
         self.entry(parent, 1, 'Executor page', 'executor_page')
         self.entry(parent, 2, 'Executor number', 'executor_number')
         self.label(parent, text='The joystick slider sets absolute brightness. Use a Master fader and FaderRange 100 in onPC.').grid(row=3, column=0, columnspan=4, sticky='w', pady=(4, 16))
-        self.edit(ttk.Checkbutton(parent, text='Enable zoom / iris axis', variable=app.values['zoom_enabled'])).grid(row=4, column=0, columnspan=4, sticky='w', pady=(0, 8))
-        self.axis_row(parent, 5, 'Zoom / iris axis', 'axis_zoom', 'invert_zoom')
-        for row, key, label in [(8, 'zoom_speed', 'Maximum speed (% points/s)'),
-                                (9, 'zoom_dead_zone', 'Centre dead zone (%)'),
-                                (10, 'initial_zoom', 'Initial / reset level (%)'),
-                                (11, 'zoom_executor_page', 'Executor page'),
-                                (12, 'zoom_executor_number', 'Executor number')]:
+        ttk.Label(parent, text='Zoom / iris · Temp fader', font=self.state_font).grid(row=4, column=0, columnspan=4, sticky='w', pady=(8, 8))
+        self.edit(ttk.Checkbutton(parent, text='Enable zoom / iris axis', variable=app.values['zoom_enabled'])).grid(row=5, column=0, columnspan=4, sticky='w', pady=(0, 8))
+        self.axis_row(parent, 6, 'Zoom / iris axis', 'axis_zoom', 'invert_zoom')
+        for row, key, label in [(9, 'zoom_speed', 'Maximum speed (% points/s)'),
+                                (10, 'zoom_dead_zone', 'Centre dead zone (%)'),
+                                (11, 'initial_zoom', 'Initial / reset level (%)'),
+                                (12, 'zoom_executor_page', 'Executor page'),
+                                (13, 'zoom_executor_number', 'Executor number')]:
             self.entry(parent, row, label, key)
-        self.edit(ttk.Button(parent, text='Calibrate zoom / iris centre', command=app.calibrate_zoom)).grid(row=13, column=0, columnspan=4, sticky='w', pady=8)
-        self.label(parent, text='Release the control before calibrating. Centre holds its level. Use a separate zoom-only or iris-only sequence with a Temp fader and FaderRange 100.').grid(row=14, column=0, columnspan=4, sticky='w', pady=4)
-        self.advanced_fields(parent, 15, [('centre_zoom', 'Axis centre offset')])
+        self.edit(ttk.Button(parent, text='Calibrate zoom / iris centre', command=app.calibrate_zoom)).grid(row=14, column=0, columnspan=4, sticky='w', pady=8)
+        self.label(parent, text='Release the control before calibrating. Centre holds its level. Use a separate zoom-only or iris-only sequence with a Temp fader and FaderRange 100.').grid(row=15, column=0, columnspan=4, sticky='w', pady=4)
+        self.advanced_fields(parent, 16, [('centre_zoom', 'Axis centre offset')])
+        # Disabled while the draft leaves zoom / iris off; validation still checks them.
+        self.zoom_widgets = set(self.rows(parent, 6, 14)) | {self.fields['centre_zoom']}
 
-    def build_network(self, parent):
-        for row, (key, label) in enumerate([('host', 'onPC host / IP'), ('port', 'OSC port'), ('prefix', 'OSC prefix (no slashes)'),
-                                            ('attribute_x', 'MArker X attribute'), ('attribute_y', 'MArker Y attribute'), ('attribute_z', 'MArker Z attribute')]):
+    def build_output(self, parent):
+        heading = dict(column=0, columnspan=3, sticky='w', pady=(0, 8))
+        self.ttk.Label(parent, text='OSC connection', font=self.state_font).grid(row=0, **heading)
+        for row, (key, label) in enumerate([('host', 'onPC host / IP'), ('port', 'OSC port'), ('prefix', 'OSC prefix (no slashes)')], 1):
             self.entry(parent, row, label, key, width=26)
-        self.label(parent, text='In onPC, enable OSC Input, Receive and Receive Command. Match the selected OSC Interface, UDP port and prefix. Reception checks are in Diagnostics.').grid(row=6, column=0, columnspan=3, sticky='w', pady=12)
-        caption = self.ttk.Label(parent, text='Position output')
-        caption.grid(row=7, column=0, sticky='w', padx=(0, 16), pady=(16, 5))
-        self.field_captions['position_output'] = caption
-        box = self.edit(self.ttk.Combobox(parent, textvariable=self.app.values['position_output'], values=['osc', 'psn'],
-                                          state='readonly', width=8), 'readonly')
-        box.grid(row=7, column=1, sticky='w', pady=(16, 5))
-        self.fields['position_output'] = box
-        self.field_labels['position_output'] = 'Position output'
-        self.field_pages['position_output'] = self.current_page
+        self.label(parent, text='Always used for brightness, zoom / iris and buttons. In onPC, enable OSC Input, Receive and Receive Command, and match the Interface, UDP port and prefix. Reception checks are in Diagnostics.').grid(row=4, column=0, columnspan=3, sticky='w', pady=(4, 20))
+        self.ttk.Label(parent, text='MArker position', font=self.state_font).grid(row=5, **heading)
+        self.choice(parent, 6, 'Position output', 'position_output')
+        self.label(parent, text='OSC commands select the MArker, so they take the console selection. A PSN stream moves it without touching the selection.').grid(row=7, column=0, columnspan=3, sticky='w', pady=(4, 8))
+        self.sections['marker'] += self.rows(parent, 5, 7)
+        for row, (key, label) in enumerate([('attribute_x', 'MArker X attribute'), ('attribute_y', 'MArker Y attribute'), ('attribute_z', 'MArker Z attribute')], 8):
+            self.entry(parent, row, label, key, width=26)
+        self.sections['osc_position'] += self.rows(parent, 8, 10)
         for row, (key, label) in enumerate([('psn_tracker_id', 'PSN tracker ID'), ('psn_group', 'PSN multicast group'),
-                                            ('psn_port', 'PSN port'), ('psn_interface', 'PSN interface (this computer)')], 8):
+                                            ('psn_port', 'PSN port'), ('psn_interface', 'PSN interface (this computer)')], 11):
             self.entry(parent, row, label, key, width=26)
-        self.label(parent, text='osc moves the MArker with commands and takes the console selection. psn streams the position without touching the selection; brightness, zoom / iris and buttons still use OSC. In onPC set the PSN row Interface to this computer, add a tracker whose Tracker ID and MArker ID match, and see docs/PSN.md. Stop holds the position; Release marker lets the MArker reset to 0, 0, 0. Position output applies to Marker control only; Pan-tilt control always uses OSC.').grid(row=12, column=0, columnspan=3, sticky='w', pady=12)
+        self.label(parent, text='In onPC, set the PSN row Interface to this computer and add a tracker whose Tracker ID and MArker ID match; see docs/PSN.md. Stop holds the position; Release marker lets the MArker reset to 0, 0, 0.').grid(row=15, column=0, columnspan=3, sticky='w', pady=12)
+        self.sections['psn_position'] += self.rows(parent, 11, 15)
+        self.label(parent, text='Pan / tilt control always sends OSC commands; MArker position output does not apply.').grid(row=16, column=0, columnspan=3, sticky='w')
+        self.sections['pan_tilt'] += self.rows(parent, 16, 16)
 
     def build_mappings(self, parent):
         app, ttk = self.app, self.ttk
@@ -385,19 +417,18 @@ class FollowspotView:
         self.label(parent, variable=app.axes_label, font='TkFixedFont').grid(row=1, column=0, columnspan=3, sticky='w', pady=8)
         self.label(parent, variable=app.buttons_label).grid(row=2, column=0, columnspan=3, sticky='w')
         ttk.Label(parent, text='Figure 8 test · sends real output', font=self.state_font).grid(row=3, column=0, columnspan=3, sticky='w', pady=(20, 8))
-        for row, (key, label) in enumerate([('test_size', 'Figure 8 half-width, marker (m)'),
-                                            ('test_pan_tilt_size', 'Figure 8 half-swing, pan/tilt (% points)'),
-                                            ('test_period', 'Seconds per lap'),
-                                            ('test_brightness', 'Test brightness (%)')], 4):
-            self.entry(parent, row, label, key)
+        self.entry(parent, 4, ROW_CAPTIONS['test_size'][0], 'test_size')
+        self.twin(parent, 4, ROW_CAPTIONS['test_size'][1], 'test_pan_tilt_size', 'test_size')
+        self.entry(parent, 5, 'Seconds per lap', 'test_period')
+        self.entry(parent, 6, 'Test brightness (%)', 'test_brightness')
         app.test_button = ttk.Button(parent, text='Start test (figure 8)', command=lambda: app.start_output(test=True))
-        app.test_button.grid(row=8, column=0, sticky='w', pady=8)
-        self.label(parent, text='No joystick needed. Sends OSC around the initial target (marker or pan/tilt, per the applied control mode) at the test brightness; joystick input is ignored. Use Stop output above to end the test.').grid(row=9, column=0, columnspan=3, sticky='w', pady=4)
-        ttk.Label(parent, text='OSC reception', font=self.state_font).grid(row=10, column=0, columnspan=3, sticky='w', pady=(20, 8))
-        self.label(parent, text='UDP send success does not confirm reception. In onPC, use EchoInput and System Monitor to check incoming commands. Check Input, Receive, Receive Command, Interface/IP, port and prefix.').grid(row=11, column=0, columnspan=3, sticky='w')
-        self.label(parent, variable=app.fault_label, style='Fault.TLabel').grid(row=12, column=0, columnspan=3, sticky='w', pady=12)
+        app.test_button.grid(row=7, column=0, sticky='w', pady=8)
+        self.label(parent, text='No joystick needed. Sends OSC around the initial target (marker or pan/tilt, per the applied control mode) at the test brightness; joystick input is ignored. Use Stop output above to end the test.').grid(row=8, column=0, columnspan=3, sticky='w', pady=4)
+        ttk.Label(parent, text='OSC reception', font=self.state_font).grid(row=9, column=0, columnspan=3, sticky='w', pady=(20, 8))
+        self.label(parent, text='UDP send success does not confirm reception. In onPC, use EchoInput and System Monitor to check incoming commands. Check Input, Receive, Receive Command, Interface/IP, port and prefix.').grid(row=10, column=0, columnspan=3, sticky='w')
+        self.label(parent, variable=app.fault_label, style='Fault.TLabel').grid(row=11, column=0, columnspan=3, sticky='w', pady=12)
         self.release_ack = ttk.Button(parent, text='Acknowledge release warning', command=lambda: app.clear_fault('release'))
-        self.release_ack.grid(row=13, column=0, sticky='w')
+        self.release_ack.grid(row=12, column=0, sticky='w')
 
     def editor_values(self):
         app = self.app
@@ -529,16 +560,30 @@ class FollowspotView:
         self.release_ack.configure(state='normal' if 'release' in app.faults else 'disabled')
         self.draw_stage()
 
-    def inapplicable_widgets(self):
-        """Editors that belong to the other control mode, from the draft selector (not the parsed draft)."""
-        mode = self.app.values['control_mode'].get()
-        keys = PAN_TILT_FIELDS if mode == 'marker' else MARKER_FIELDS if mode == 'pan_tilt' else ()
-        return {self.fields[key] for key in keys if key in self.fields}
+    def hidden_fields(self):
+        """Fields of the inactive control mode / position output, from the draft selectors (not the parsed draft)."""
+        return inactive_fields(self.app.values['control_mode'].get(), self.app.values['position_output'].get())
+
+    def apply_sections(self):
+        if self.app.values['control_mode'].get() == 'pan_tilt':
+            shown = {'pan_tilt'}
+        else:
+            shown = {'marker', 'osc_position' if self.app.values['position_output'].get() == 'osc' else 'psn_position'}
+        for name, widgets in self.sections.items():
+            visible = name in shown
+            if self.section_shown.get(name) != visible:
+                for widget in widgets:
+                    widget.grid() if visible else widget.grid_remove()
+                self.section_shown[name] = visible
+
+    def zoom_off(self):
+        return not self.app.values['zoom_enabled'].get()
 
     def apply_field_states(self):
-        """Disabled = output running, the field belongs to the other control mode, or a local button action is loaded."""
+        """Hide the inactive path; disable editors while running, for a loaded local action, or zoom / iris while it is off."""
+        self.apply_sections()
         running = self.app.controller.active
-        inapplicable = self.inapplicable_widgets()
+        inapplicable = set(self.zoom_widgets) if self.zoom_off() else set()
         if self.app.button_action.get() != BUTTON_ACTIONS['command']:
             # Local actions cannot carry MA commands, whatever the run state.
             inapplicable |= {self.app.press_entry, self.app.release_entry}
@@ -551,7 +596,7 @@ class FollowspotView:
                 widget.configure(state=state)
                 self.field_states[widget] = state
         index = self.mode_index()
-        for key, texts in AXIS_CAPTIONS.items():
+        for key, texts in (AXIS_CAPTIONS | ROW_CAPTIONS).items():
             if self.caption_texts.get(key) != texts[index]:
                 self.field_captions[key].configure(text=texts[index])
                 self.caption_texts[key] = texts[index]
@@ -585,7 +630,8 @@ class FollowspotView:
             self.app.notebook.select(2 if notebook is self.app.notebook else 1)
             notebook.select(shell)
             key = next((key for key in keys if key in self.fields), None)
-            if key:
+            hidden = key in self.hidden_fields()
+            if key and not hidden:
                 if key in self.advanced:
                     self.advanced[key][0].set(True)
                 widget = self.fields[key]
@@ -593,9 +639,22 @@ class FollowspotView:
                 self.app.root.after_idle(lambda: self.reveal(body, widget))
             label = AXIS_CAPTIONS[key][self.mode_index()] if key in AXIS_CAPTIONS else self.field_labels.get(key, 'Button mapping')
             text = f'{label}: {error}'
-            if key and self.fields[key] in self.inapplicable_widgets():
-                text += f' Switch Control to {"pan_tilt" if key in PAN_TILT_FIELDS else "marker"} to correct it.'
+            if hidden:
+                text += ' ' + self.reach_hint(key)
+            elif key and self.zoom_off() and self.fields[key] in self.zoom_widgets:
+                text += ' Enable zoom / iris to correct it.'
             self.app.status.set(text)
+
+    def reach_hint(self, key):
+        """How to show a hidden field so its error can be corrected."""
+        if key in PAN_TILT_FIELDS:
+            selector, value, tab = 'Control', 'pan_tilt', 'Target'
+        elif self.app.values['control_mode'].get() == 'pan_tilt':
+            selector, value, tab = 'Control', 'marker', 'Target'
+        else:
+            selector, value, tab = 'Position output', 'psn' if key in PSN_POSITION_FIELDS else 'osc', 'Output'
+        key = 'control_mode' if selector == 'Control' else 'position_output'
+        return f'Switch {selector} to {CHOICE_LABELS[key][value]} (Setup → {tab}) to correct it.'
 
     def reveal(self, body, widget):
         canvas = body.scroll_canvas

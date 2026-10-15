@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 import followspot
+import followspot_core as core
 from followspot_core import BUTTON_ACTIONS, ButtonEdges, Controller, Settings, pan_tilt_commands
 
 
@@ -994,27 +995,93 @@ with tempfile.TemporaryDirectory() as folder:
         app.stop_output()
         self.assertEqual(str(app.view.fields['host']['state']), 'normal')
 
-    def test_control_mode_disables_the_other_modes_fields_and_stop_keeps_them_disabled(self):
+    def test_setup_tabs_name_the_target_and_output_pages(self):
         app = self.open_app()
+        tabs = [app.view.setup_tabs.tab(tab, 'text') for tab in app.view.setup_tabs.tabs()]
+        self.assertEqual(tabs, ['Joystick', 'Target', 'Brightness / zoom', 'Output', 'Buttons'])
+
+    def test_control_mode_shows_only_its_own_fields_and_stop_keeps_them_hidden(self):
+        app = self.open_app()
+        shown = lambda key: bool(app.view.fields[key].winfo_manager())
         state = lambda key: str(app.view.fields[key]['state'])
-        self.assertEqual(state('marker_id'), 'normal')
-        self.assertEqual(state('position_output'), 'readonly')
-        self.assertEqual(state('pan_min'), 'disabled')
-        self.assertEqual(state('control_mode'), 'readonly')
+        for key in ('marker_id', 'max_speed', 'test_size', 'position_output', 'attribute_x', 'host'):
+            self.assertTrue(shown(key), key)
+        for key in ('pan_min', 'pan_tilt_speed', 'test_pan_tilt_size', 'fixture_group'):
+            self.assertFalse(shown(key), key)
         app.values['control_mode'].set('pan_tilt')
-        self.assertEqual(state('marker_id'), 'disabled')
-        self.assertEqual(state('max_speed'), 'disabled')
-        self.assertEqual(state('test_size'), 'disabled')
-        self.assertEqual(state('position_output'), 'disabled')
+        for key in ('marker_id', 'max_speed', 'test_size', 'position_output', 'attribute_x', 'psn_port'):
+            self.assertFalse(shown(key), key)
+        for key in ('pan_min', 'pan_tilt_speed', 'test_pan_tilt_size', 'fixture_group', 'host'):
+            self.assertTrue(shown(key), key)
         self.assertEqual(state('pan_min'), 'normal')
-        self.assertEqual(state('test_pan_tilt_size'), 'normal')
-        self.assertEqual(state('host'), 'normal')
         app.start_output()
         self.assertEqual(state('pan_min'), 'disabled')
         app.stop_output()
-        self.assertEqual(state('marker_id'), 'disabled')
+        self.assertFalse(shown('marker_id'))
         self.assertEqual(state('pan_min'), 'normal')
         self.assertEqual(state('host'), 'normal')
+
+    def test_position_output_shows_only_its_own_fields(self):
+        app = self.open_app()
+        shown = lambda key: bool(app.view.fields[key].winfo_manager())
+        self.assertTrue(shown('attribute_x'))
+        self.assertFalse(shown('psn_port'))
+        app.values['position_output'].set('psn')
+        self.assertFalse(shown('attribute_x'))
+        self.assertTrue(shown('psn_port'))
+
+    def test_hidden_fields_are_exactly_the_unvalidated_fields(self):
+        app = self.open_app()
+        for mode, output in (('marker', 'osc'), ('marker', 'psn'), ('pan_tilt', 'osc'), ('pan_tilt', 'psn')):
+            with self.subTest(mode=mode, output=output):
+                app.values['control_mode'].set(mode)
+                app.values['position_output'].set(output)
+                hidden = {key for key, widget in app.view.fields.items() if not widget.winfo_manager()}
+                self.assertEqual(hidden, core.inactive_fields(mode, output))
+
+    def test_speed_and_figure_eight_rows_follow_the_draft_control_mode(self):
+        app = self.open_app()
+        speed, size = app.view.field_captions['max_speed'], app.view.field_captions['test_size']
+        self.assertIs(app.view.field_captions['pan_tilt_speed'], speed)
+        self.assertIs(app.view.field_captions['test_pan_tilt_size'], size)
+        self.assertEqual(str(speed.cget('text')), 'Maximum speed (m/s)')
+        app.values['control_mode'].set('pan_tilt')
+        self.assertEqual(str(speed.cget('text')), 'Maximum speed (% points/s)')
+        self.assertIn('pan/tilt', str(size.cget('text')))
+
+    def test_selectors_show_readable_labels_and_save_the_raw_values(self):
+        app = self.open_app()
+        control, output = app.view.fields['control_mode'], app.view.fields['position_output']
+        self.assertEqual((control.get(), output.get()), ('MArker', 'OSC commands'))
+        app.values['control_mode'].set('pan_tilt')
+        self.assertEqual(control.get(), 'Pan / tilt')
+        app.values['control_mode'].set('marker')
+        output.set('PSN stream')
+        output.event_generate('<<ComboboxSelected>>')
+        self.assertEqual(app.values['position_output'].get(), 'psn')
+        self.assertTrue(app.apply_settings())
+        self.assertEqual(Settings.load(app.settings_path).position_output, 'psn')
+
+    def test_zoom_fields_are_disabled_until_zoom_is_enabled(self):
+        app = self.open_app()
+        state = lambda key: str(app.view.fields[key]['state'])
+        self.assertEqual(state('zoom_speed'), 'disabled')
+        self.assertEqual(state('axis_zoom'), 'disabled')
+        self.assertEqual(state('executor_page'), 'normal')
+        app.values['zoom_enabled'].set(True)
+        self.assertEqual(state('zoom_speed'), 'normal')
+        self.assertEqual(state('axis_zoom'), 'normal')
+
+    def test_pan_tilt_save_ignores_invalid_marker_values(self):
+        app = self.open_app()
+        app.values['control_mode'].set('pan_tilt')
+        app.values['marker_id'].set('0')
+        app.values['psn_port'].set('0')
+        self.assertTrue(app.apply_settings())
+        self.assertEqual(Settings.load(app.settings_path).marker_id, 0)
+        app.values['control_mode'].set('marker')
+        self.assertFalse(app.apply_settings())
+        self.assertIn('MArker CID', app.status.get())
 
     def test_local_action_keeps_command_fields_disabled_across_start_and_stop(self):
         app = self.open_app(buttons={'0': {'action': 'reset'}})
@@ -1046,19 +1113,29 @@ with tempfile.TemporaryDirectory() as folder:
         app.values['control_mode'].set('marker')
         self.assertEqual(str(caption.cget('text')), 'Left / right axis')
 
-    def test_error_in_a_disabled_field_says_how_to_reach_it(self):
+    def test_error_in_a_hidden_or_disabled_field_says_how_to_reach_it(self):
+        # Hidden fields are not range-checked, but a value that is not a number still cannot be saved.
         app = self.open_app()
         app.values['control_mode'].set('pan_tilt')
-        app.values['marker_id'].set('0')
+        app.values['marker_id'].set('abc')
         self.assertFalse(app.apply_settings())
-        self.assertIn('Switch Control to marker', app.status.get())
+        self.assertIn('Switch Control to MArker', app.status.get())
         app.values['marker_id'].set('1')
         app.values['pan_min'].set('-5')
         self.assertFalse(app.apply_settings())
-        self.assertNotIn('Switch Control', app.status.get())
+        self.assertNotIn('Switch', app.status.get())
+        app.values['pan_min'].set('low')
         app.values['control_mode'].set('marker')
         self.assertFalse(app.apply_settings())
-        self.assertIn('Switch Control to pan_tilt', app.status.get())
+        self.assertIn('Switch Control to Pan / tilt', app.status.get())
+        app.values['pan_min'].set('0')
+        app.values['psn_port'].set('abc')
+        self.assertFalse(app.apply_settings())
+        self.assertIn('Switch Position output to PSN stream', app.status.get())
+        app.values['psn_port'].set('56565')
+        app.values['zoom_speed'].set('0')
+        self.assertFalse(app.apply_settings())
+        self.assertIn('Enable zoom / iris', app.status.get())
 
     def test_axis_error_label_follows_the_draft_control_mode(self):
         app = self.open_app()
