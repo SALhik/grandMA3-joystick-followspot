@@ -995,6 +995,25 @@ with tempfile.TemporaryDirectory() as folder:
         app.stop_output()
         self.assertEqual(str(app.view.fields['host']['state']), 'normal')
 
+    def test_trackpad_reversal_events_do_not_make_the_page_bounce(self):
+        # A macOS trackpad sends a +1 delta alongside real -N deltas (logged on hardware).
+        from types import SimpleNamespace
+        view = self.open_app().view
+        now = [0.0]
+        view.clock = lambda: now[0]
+        canvas = object()
+        event = lambda delta: SimpleNamespace(num='??', delta=delta)
+        directions = []
+        for delta in (-2, 1, -3, 1, -3):
+            directions.append(view.wheel_direction(canvas, event(delta)))
+            now[0] += 0.001
+        self.assertEqual(directions, [1, 0, 1, 0, 1])
+        # A deliberate swipe back is accepted at the next ~16 ms event, even mid-momentum.
+        now[0] += 0.016
+        self.assertEqual(view.wheel_direction(canvas, event(2)), -1)
+        now[0] += 0.016
+        self.assertEqual(view.wheel_direction(canvas, event(-2)), 1)
+
     def test_setup_tabs_name_the_target_and_output_pages(self):
         app = self.open_app()
         tabs = [app.view.setup_tabs.tab(tab, 'text') for tab in app.view.setup_tabs.tabs()]

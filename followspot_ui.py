@@ -1,8 +1,12 @@
 """Native Tk presentation; input, output and persistence stay in followspot.App."""
+import time
 from decimal import Decimal
 from followspot_core import BUTTON_ACTIONS, PAN_TILT_FIELDS, PSN_POSITION_FIELDS, Motion, clamp, inactive_fields
 
 
+# macOS trackpads send a spurious opposite-sign wheel event within ~1 ms of a real one;
+# real events are ~16 ms apart, so only an opposite event this close is dropped.
+WHEEL_REVERSAL_SECONDS = 0.005
 PERCENT_FIELDS = {'dead_zone', 'zoom_dead_zone'}
 AXIS_NAMES = {'axis_x': 'left / right control', 'axis_y': 'upstage / downstage control',
               'axis_slider': 'brightness slider', 'axis_zoom': 'zoom / iris control',
@@ -45,6 +49,7 @@ class FollowspotView:
         self.editable, self.advanced, self.axis_feedback, self.axis_inputs = [], {}, {}, {}
         self.wrapping = []
         self.page_layouts = []
+        self.clock, self.wheel_last = time.monotonic, {}
         self.wrap_widths = {}
         self.editor_baseline = ('0', BUTTON_ACTIONS['command'], '', '')
         self.readiness = tk.StringVar()
@@ -664,6 +669,15 @@ class FollowspotView:
             if y < top or y + widget.winfo_height() > top + canvas.winfo_height():
                 canvas.yview_moveto(max(0, y - 20) / body.winfo_height())
 
+    def wheel_direction(self, canvas, event):
+        """Scroll direction (-1 up, 1 down) for a wheel event, or 0 to drop a spurious reversal."""
+        direction = -1 if event.num == 4 or event.delta > 0 else 1
+        now, last = self.clock(), self.wheel_last.get(canvas)
+        if last and last[0] != direction and now - last[1] < WHEEL_REVERSAL_SECONDS:
+            return 0
+        self.wheel_last[canvas] = (direction, now)
+        return direction
+
     def bind_scrolling(self, parent):
         for child in parent.winfo_children():
             self.bind_scrolling(child)
@@ -674,8 +688,9 @@ class FollowspotView:
         if body is not None:
             def wheel(event, canvas=body.scroll_canvas):
                 if canvas.bbox('all') and canvas.bbox('all')[3] > canvas.winfo_height():
-                    delta = -1 if event.num == 4 or event.delta > 0 else 1
-                    canvas.yview_scroll(delta, 'units')
+                    delta = self.wheel_direction(canvas, event)
+                    if delta:
+                        canvas.yview_scroll(delta, 'units')
                     return 'break'
             for event in ('<MouseWheel>', '<Button-4>', '<Button-5>'):
                 widget.bind(event, wheel, add='+')
