@@ -126,7 +126,7 @@ If nothing moves:
 3. If the commands appear but are rejected, read the error text in System Monitor. The tool sends `ClearSelection; MArker 1; Attribute "XYZ_X" At Absolute Percent 50; ...`.
 4. If the commands are accepted but the beams do not move, recheck Steps 2, 3 and 5.
 5. If the marker moves but the fader does not, recheck Step 6 (Master fader, **FaderRange = 100**, correct executor page and number).
-6. In pan/tilt control (see the pan/tilt section below), the test sends `Group <n>; Attribute "Pan" ...` instead of a MArker. If nothing moves, check that the group number exists (the System Monitor error names it), that the `Pan` and `Tilt` attribute names match `List Attribute`, and that the fixtures in the group actually have pan and tilt. Items 1-3 and 5 apply unchanged.
+6. In pan/tilt control (see the pan/tilt section below), the test sends `Group <n>; Attribute "Pan" ...` instead of a MArker. If nothing moves, check that the group number exists (System Monitor may report a missing group; this has not been observed), that the `Pan` and `Tilt` attribute names match `List Attribute`, and that the fixtures in the group actually have pan and tilt. Items 1-3 and 5 apply unchanged.
 
 ## Step 11. Connect the joystick
 

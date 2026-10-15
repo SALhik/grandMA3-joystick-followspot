@@ -260,6 +260,41 @@ direction, how fixtures that followed a MArker behave after a mode switch, and
 the Setup / Live layout in the real window. See docs/GRANDMA3_SETUP.md,
 Optional: pan/tilt control, for the operator checklist.
 
+Known minor issues in the pan/tilt work (found in review, not fixed):
+
+- A full-suite run once printed three Tk `invalid command name ...<lambda>` lines.
+  `show_error` queues `after_idle(reveal)`, and
+  `test_error_in_a_disabled_field_says_how_to_reach_it` can end without draining
+  idle events. It is test noise, was not reproduced in later runs and is not a
+  product fault. Fix: `update_idletasks()` in the test or a `winfo_exists` guard
+  in `reveal`.
+- The Press / Release command entries are owned by two code paths,
+  `update_button_editor` and `apply_field_states`. They agree today (a regression
+  test pins Start / Stop with a local action loaded); a single owner would be safer.
+- Test gaps: no test of a mapped Reset in pan/tilt mode skipping integration (the
+  `dt = 0` path is mode-agnostic), of the Diagnostics row shift, or of `show_error`
+  focusing a disabled widget. The settings round-trip test covers pan only, the
+  range-error tests are loose (`initial_tilt` is not tested on its own), and the
+  core `control_mode` guard test only asserts that the key is in `PSN_FIELDS`
+  (a window test covers the behaviour).
+- `Motion.step` still writes `xyz[2] = z` in pan/tilt mode (harmless).
+- The pan/tilt range error uses "0-100" with a hyphen where neighbouring messages
+  use an en dash.
+- With no PSN stream, Release marker (button or mapped action) in pan/tilt mode
+  only sets the status "No PSN stream is open."; the mapped-button action is
+  labelled "Release PSN marker" elsewhere. The command string is quoted in
+  docs/OPERATING.md, docs/GRANDMA3_SETUP.md and here.
+- In docs/GRANDMA3_SETUP.md the code fence inside the numbered pan/tilt list may
+  render the next item as a new list. The historical plan
+  `docs/superpowers/plans/2026-10-15-pan-tilt-control.md` still carries earlier
+  wording of some docs text; leave it.
+- Design choices, not defects: Start sends the displayed pan/tilt to the whole
+  group at full speed (first use snaps to 50 / 50); one group and one pan/tilt
+  pair for all fixtures (no per-fixture values); fields for the other control mode
+  are disabled, not hidden; the Diagnostics labels are static; the Control
+  selector shows the literal values `marker` and `pan_tilt`; a settings file
+  saved by this version is refused by an older checkout.
+
 Automated coverage: core motion/configuration/OSC-packet tests, simulated SDL
 input/disconnect, native HID discovery and combined-list tests with doubles,
 PSN encoder (pinned bytes), streamer (injected sockets; one real socket open, no packet is
