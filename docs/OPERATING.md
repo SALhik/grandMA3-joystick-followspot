@@ -4,9 +4,9 @@ How to configure the joystick and run the tool once onPC is set up (see [GRANDMA
 
 ## Window layout
 
-**Live** shows the tracked target on a read-only top view of the applied operating limits, its X/Y/Z coordinates, brightness and zoom/iris. Positive Y is at the top; the drawing keeps the same scale on both axes. It is not a fixture view or feedback from MA. While stopped, brightness is a preview of the current slider; during output it shows the last level sent. Start sends the current slider level, which may differ from MA's fader.
+**Live** shows the tracked target on a read-only top view of the applied operating limits, its X/Y/Z coordinates, brightness and zoom/iris. Positive Y is at the top; the drawing keeps the same scale on both axes. It is not a fixture view or feedback from MA. While stopped, brightness previews the current slider using applied settings; during output it shows the last level sent. The separate Start preview uses the pending settings and shows the target, brightness and enabled zoom/iris that Start will send. Review it after changing mappings, inversion, limits, Z or control mode. Start sends the current slider level, which may differ from MA's fader. Live scrolls when needed at smaller window sizes, and keyboard focus reveals its controls; Save settings, status and faults keep their space outside the views.
 
-**Setup** contains Joystick, Target, Brightness / zoom, Output and Buttons. These remain readable during output, with editing disabled. Settings for the control mode or position output that is not selected are hidden and are not checked when you save; switch the selector to see them again. Scroll a page to see additional settings. **Diagnostics** contains raw input readings, the figure 8 test and OSC reception guidance. Input readings are ignored during a test.
+**Setup** contains Joystick, Target, Brightness / zoom, Output and Buttons. These remain readable during output, with editing disabled. Settings for the control mode or position output that is not selected are hidden and are not range-checked when you save; they still must have valid types and finite numbers. Switch the selector to see them again. Scroll a page to see additional settings. **Diagnostics** contains raw input readings, the figure 8 test and OSC reception guidance. Input readings are ignored during a test.
 
 Start/Stop and the output state remain visible in every view. Start is disabled when no joystick is selected, mappings are unusable, learning is active or edits are invalid/incomplete. The explanation appears beside the output state. Figure 8 testing needs no joystick.
 
@@ -19,7 +19,7 @@ Start/Stop and the output state remain visible in every view. Start is disabled 
 5. In **Setup → Output**, set the host, port and prefix. In **Setup → Brightness / zoom**, set the brightness executor page/number. The default marker attribute names are `XYZ_X`, `XYZ_Y`, `XYZ_Z`; confirm them with `List Attribute` if your fixture library differs.
 6. Optionally configure buttons and zoom/iris (below), click **Save settings**, check **Live**, then click **Start output**.
 
-Start also applies and saves the displayed settings. It immediately sends the displayed target, the current brightness and the enabled zoom/iris level. It does not read the fixture's position or fader levels from onPC.
+Start also applies and saves the displayed settings. It immediately sends the values shown in the Start preview, including any pending changes to the target or brightness mapping. It does not read the fixture's position or fader levels from onPC.
 
 ## Control mode: marker or pan/tilt
 
@@ -69,13 +69,13 @@ The default initial/reset level is **50%** and the default maximum speed is **50
 
 ## Test mode (no joystick)
 
-To check onPC without a joystick, open **Diagnostics**, set size, seconds per lap and test brightness, then click **Start test (figure 8)** (`test_size`, `test_period`, `test_brightness` in `settings.json`). The marker traces a figure 8 around the initial target, stays inside the operating limits, and the brightness executor is held at the test brightness. The joystick is ignored during a test. **Stop output** ends it and keeps the last position. The test is labeled **sends real output** because it sends real OSC to onPC like normal output.
+To check onPC without a joystick, open **Diagnostics**, set size, seconds per lap and test brightness, then click **Start test (figure 8)** (`test_size`, `test_period`, `test_brightness` in `settings.json`). The marker traces a figure 8 around the initial target, stays inside the operating limits, and the brightness executor is held at the test brightness. The joystick is ignored during a test. **Stop output** ends it and keeps the last position. The test sends real output: position uses the selected OSC or PSN transport in marker mode, or OSC in pan/tilt mode; brightness and enabled zoom/iris always use OSC.
 
 ## Stop and restart
 
 **Stop** sends release commands for buttons this tool pressed, stops transmitting, and keeps the current target and zoom/iris level in memory. It does not clear the programmer, release the MArker, blackout the lights or move them home. Resume with Start. Closing the window attempts button releases and stops output.
 
-In PSN position output, **Stop** keeps streaming the last position so the lights stay put, and **Release marker** (Live button or a mapped button) ends the stream so onPC resets the MArker to 0, 0, 0. Closing the window asks first when a stream is open. The Live **Release marker** button acts immediately, with no confirmation, including while output is running (it stops output too). Details, including the held-position display and what is refused while a stream is held, are in [PSN.md](PSN.md#configure-the-app).
+In PSN position output, **Stop** keeps streaming the last position so the lights stay put, and the output state prominently shows **PSN HOLDING**. **Release marker** ends the stream so onPC resets the MArker to 0, 0, 0. The Live button asks for confirmation whenever a stream is open; cancelling keeps the current output and stream state. A joystick button mapped to **Release PSN marker** remains immediate. Closing the window also asks first when a stream is open. Details, including the held-position display and what is refused while a stream is held, are in [PSN.md](PSN.md#configure-the-app).
 
 On a joystick disconnect or read failure, output stops and the joystick is closed: reconnect, Refresh, then Start. On an OSC send failure, output stops but the joystick stays selected: correct the network problem shown in the status, then Start. Output never resumes automatically. Relaunching restores your saved initial X/Y, Z (initial pan / tilt in pan/tilt mode) and zoom/iris level; review those before enabling.
 
@@ -98,3 +98,5 @@ Existing settings need no migration for the percentage display: dead zones still
 - MArker input uses the programmer and can change the console's selection context. Each position update sends, in one OSC string: `ClearSelection; MArker <CID>; Attribute "XYZ_X" At Absolute Percent <value>; ...`. Selection must be separate from attribute assignment; `MArker 1 Attribute ...` is rejected by onPC. Avoid concurrent programmer work that relies on the selection during followspot operation in OSC mode. PSN position output (Setup → Output → Position output) avoids this: it was verified with a test sender to leave the selection alone, see [PSN.md](PSN.md). It has not yet been checked with the real joystick or a real show.
 - Pan/tilt control sends the group selection with every change, so, like the OSC marker, it takes the console selection while output runs and the encoders are expected to be unusable; this is inferred from the marker behaviour and not yet observed. Percent is expected to map to the fixture's full pan/tilt range as MA defines it for the attribute, but this is not confirmed; see the checklist in [GRANDMA3_SETUP.md](GRANDMA3_SETUP.md#optional-pantilt-control).
 - Automated tests cannot prove end-to-end operation. Before show use, check physical input, OSC reception, movement smoothness and real fixture aiming from a normal macOS launch with an onPC test show.
+
+Use the [acceptance record](ACCEPTANCE.md) for the remaining environment, visual and long-run checks and to record actual results.

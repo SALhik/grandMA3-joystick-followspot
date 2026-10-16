@@ -50,11 +50,13 @@ Check with `lsof -nP -iUDP:56565` that onPC listens. The System Monitor shows OS
 
 What changes in PSN mode: the app no longer sends `ClearSelection; MArker ...`, so your selection and encoders stay free. Brightness, zoom / iris and buttons still go over OSC, so the OSC setup in [GRANDMA3_SETUP.md](GRANDMA3_SETUP.md) is still needed. The MArker is chosen by the PSN row in onPC, so the app's MArker CID and movement space are not used for conversion in PSN mode, but they must still be valid settings. The PSN fields are checked only while PSN is selected, and the MArker attribute names only while OSC commands are selected.
 
-**Stop and Release marker.** PSN has no hold: if packets stop, onPC resets the MArker to 0, 0, 0. So **Stop keeps sending the last position** and the lights stay put; **Release marker** (Live button, or a button mapped to "Release PSN marker") ends the stream, and the MArker then resets to 0, 0, 0. Release marker also stops output if it is running. Closing the window (or Cmd-Q on macOS) asks for confirmation first when a stream is open, because closing ends the stream; Release marker does not ask. A joystick disconnect or an OSC failure stops output but keeps the stream holding.
+**Stop and Release marker.** PSN has no hold: if packets stop, onPC resets the MArker to 0, 0, 0. So **Stop keeps sending the last position** and the output state shows **PSN HOLDING**; **Release marker** ends the stream, and the MArker then resets to 0, 0, 0. Release marker also stops output if it is running. The Live button asks for confirmation whenever a stream is open; cancelling keeps output and streaming unchanged. A button mapped to "Release PSN marker" remains immediate. Closing the window (or Cmd-Q on macOS) also asks first when a stream is open. A joystick disconnect or an OSC failure stops output but keeps the stream holding.
 
 **Warning:** quitting the app, closing the Terminal that launched it, a crash, or the computer sleeping all stop the stream, and the MArker then resets to 0, 0, 0 mid-show. Quitting and a crash end the stream because the process ends; closing the Terminal and sleep should do the same but were not tested.
 
-The PSN selector and fields can still be edited while a stream is held and output is stopped, but Save settings, Start and the stopped Reset button refuse to apply a changed PSN setting, or a changed control mode, until you Release marker. While a stream is held and output is stopped, the Live position shows a second "Held at" line, because the displayed target (changed by Reset or edits) may differ from what onPC is holding; the next Start sends the displayed target. A stream failure (for example a socket error) closes the stream, stops output if it was running, and shows a PSN fault that stays until the next successful Start (Release marker cannot clear it, because the failed stream is already closed); the MArker resets in onPC.
+The PSN selector and fields can still be edited while a stream is held and output is stopped, but Save settings and the stopped Reset button refuse to apply a changed PSN setting, or a changed control mode, until you Release marker. Readiness explains that blocker and disables Start and testing until you Release or revert those edits. While a stream is held and output is stopped, the Live position shows a second "Held at" line, because the applied target (changed by Reset or settings) may differ from what onPC is holding; the separate Start preview shows what pending settings will send. A stream failure (for example a socket error) closes the stream, stops output if it was running, and shows a PSN fault that stays until the next successful Start (Release marker cannot clear it, because the failed stream is already closed); the MArker resets in onPC.
+
+PSN positions and operating bounds must fit finite float32 values, as required by the packet format. A figure-8 test's first DATA packet starts at its initial target, even after the tracked target has moved. Socket sends are bounded so a stalled network send cannot indefinitely hold up stream shutdown.
 
 The Fixture Sheet and the MArker encoders do not show the PSN position (they read 0, 0, 0); use the 3D view or the PSN row.
 
@@ -86,7 +88,7 @@ Check with `lsof -nP -iUDP:56565` on the onPC computer and watch the tracker in 
 python3 tools/psn_test_sender.py --iface 127.0.0.1 --pattern axes --seconds 30
 ```
 
-Patterns: `static` (hold `--home X Y Z`, default 0 0 1.5), `circle`, and `axes` (6 s hold, then x, y and z swept by `--radius` for 6 s each, to tell the axes apart). Other options: `--dest`, `--port`, `--tracker`, `--rate` (default 30 Hz), `--seconds`.
+Patterns: `static` (hold `--home X Y Z`, default 0 0 1.5), `circle`, and `axes` (6 s hold, then x, y and z swept by `--radius` for 6 s each, to tell the axes apart). Other options: `--dest`, `--port`, `--tracker`, `--rate` (default 30 Hz), `--seconds`. Invalid addresses, ports, tracker IDs, durations, rates or non-finite/unrepresentable coordinates are rejected before opening a socket or sending any packets.
 
 ## Packet format (for the implementation)
 
@@ -106,33 +108,8 @@ The app's encoder produces the same bytes as the verified `tools/psn_test_sender
 
 ## Remaining work
 
-PSN output is implemented and covered by automated tests only (130 tests on a Tk-capable Python). Nothing below has operator evidence yet.
+The app is covered by automated tests, including Release-button visibility and PSN-field error navigation. The default position output is OSC, as stated above. Automated coverage does not establish onPC reception, fixture movement or long-run/background reliability.
 
-### Operator checks (test show, not yet done)
+The [acceptance record](ACCEPTANCE.md) is the single checklist for the app's own stream, physical joystick, Stop/Release/close and Cmd-Q, Setup → Output and Live visuals, long-running/background streaming, snap-back timing, another-computer setup and Windows. The verified test-sender findings above remain separate from those pending app checks.
 
-1. With onPC set up as above and **Position output** = **PSN stream**, run the figure-8 test. The MArker traces a figure 8 while the console selection and the encoder wheels stay untouched.
-2. Press Stop, then Release marker. The MArker holds after Stop and drops to 0, 0, 0 after Release marker.
-3. Run with the real joystick and confirm OSC brightness, zoom/iris and mapped buttons still work while position goes over PSN.
-4. Pull the joystick cable. Output stops, the MArker holds, and the fault mentions Release marker.
-5. Close the window while a stream is held. A confirmation dialog appears. On macOS, repeat with Cmd-Q.
-6. Look at the Setup **OSC** tab (Position output and the four PSN fields) and the Live view (Release marker button, dashed "Held" marker, "Held at" line). Screenshots taken during development were black, so the layout has not been seen.
-7. Leave the stick idle for several minutes in PSN mode and confirm the MArker does not snap back (App Nap and sender-thread timing, see Open risks).
-
-### Unverified environments
-
-- onPC receiving the app's own stream (only `tools/psn_test_sender.py` was seen working).
-- Script and onPC on different computers (the section above is untested).
-- Windows.
-
-### Open decision
-
-- **Release marker confirmation.** The Live button acts immediately, even while output runs, because the spec enables it whenever a stream is open. An accidental click drops the spot to 0, 0, 0. Options: add a confirmation only when the button is clicked while output is running (the final reviewer's recommendation), or keep it immediate.
-
-### Known minor issues (not fixed)
-
-- Cmd-Q during a failed-settings error dialog only prints a traceback.
-- Cmd-Q while the close confirmation is open might open a second dialog (speculative, not reproduced).
-- A Release marker press with no stream open replaces the status text.
-- `docs/OPERATING.md` points here for the PSN defaults, but this guide does not state that `osc` is the default `position_output`.
-- No test covers Release-button visibility in OSC versus PSN mode or field-error navigation to a PSN field.
-- `psn_group` accepts 224.0.0.0 (any multicast address), unchanged by design.
+Remaining behavior to keep in mind: a mapped Release press with no stream replaces routine status text; PSN group validation accepts any IPv4 multicast address. Cmd-Q during a failed-settings dialog and reentrant close-confirmation behavior still need explicit checks in the acceptance record.

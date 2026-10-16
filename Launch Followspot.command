@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Select a Python that includes Tk; this does not install or change anything.
+# Select Python 3.10+ with Tk; this does not install or change anything.
 set -u
 cd -- "$(dirname -- "$0")" || exit 1
 for followspot_python in \
@@ -9,7 +9,7 @@ for followspot_python in \
   /opt/homebrew/bin/python3 \
   /usr/local/bin/python3 \
   /usr/bin/python3; do
-  if [[ -x "$followspot_python" ]] && "$followspot_python" -c 'import tkinter, _tkinter' >/dev/null 2>&1; then
+  if [[ -x "$followspot_python" ]] && "$followspot_python" -c 'import sys; sys.exit(1) if sys.version_info < (3, 10) else None; import tkinter, _tkinter' >/dev/null 2>&1; then
     "$followspot_python" "$PWD/followspot.py" "$@"
     followspot_result=$?
     if (( followspot_result != 0 )); then
@@ -19,7 +19,7 @@ for followspot_python in \
     exit "$followspot_result"
   fi
 done
-print 'No Python with Tk support was found.'
+print 'No Python 3.10 or newer with Tk support was found.'
 print 'Install Python from python.org, or install matching Homebrew python-tk.'
 read 'followspot_ack?Press Return to close. '
 exit 1

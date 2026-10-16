@@ -15,6 +15,7 @@ from typing import get_type_hints
 
 # Longest sample interval integrated as motion; longer gaps move at most this far.
 MAX_STEP = 0.25
+FLOAT32_MAX = float.fromhex('0x1.fffffep+127')
 BUTTON_ACTIONS = {'command': 'MA command', 'start': 'Start output',
                   'stop': 'Stop output', 'toggle': 'Toggle output',
                   'reset': 'Reset target', 'release_marker': 'Release PSN marker'}
@@ -187,6 +188,8 @@ class Settings:
             lo, hi = getattr(self, f'space_{axis}_min'), getattr(self, f'space_{axis}_max')
             if lo >= hi:
                 raise SettingsError(f'{axis.upper()} movement-space minimum must be below maximum.', f'space_{axis}_min', f'space_{axis}_max')
+            if self.position_output == 'osc' and not math.isfinite(hi - lo):
+                raise SettingsError(f'{axis.upper()} movement-space span must be finite.', f'space_{axis}_min', f'space_{axis}_max')
             if axis != 'z':
                 a, b = getattr(self, f'{axis}_min'), getattr(self, f'{axis}_max')
                 initial = getattr(self, f'initial_{axis}')
@@ -208,6 +211,12 @@ class Settings:
             raise SettingsError('Position output must be osc or psn.', 'position_output')
 
     def validate_psn(self):
+        coordinate_fields = ('initial_x', 'initial_y', 'z', 'x_min', 'x_max', 'y_min', 'y_max',
+                             'space_x_min', 'space_x_max', 'space_y_min', 'space_y_max',
+                             'space_z_min', 'space_z_max')
+        for key in coordinate_fields:
+            if abs(getattr(self, key)) > FLOAT32_MAX:
+                raise SettingsError('PSN coordinates and bounds must fit a 32-bit float.', key)
         if not 1 <= self.psn_tracker_id <= 65535:
             raise SettingsError('PSN tracker ID must be 1–65535.', 'psn_tracker_id')
         if not 1 <= self.psn_port <= 65535:
@@ -231,7 +240,7 @@ class Settings:
         for axis in ('pan', 'tilt'):
             lo, hi, initial = getattr(self, f'{axis}_min'), getattr(self, f'{axis}_max'), getattr(self, f'initial_{axis}')
             if not 0 <= lo < hi <= 100 or not lo <= initial <= hi:
-                raise SettingsError(f'{axis.capitalize()} limits must be 0-100 with the minimum below the maximum, and contain the initial value.',
+                raise SettingsError(f'{axis.capitalize()} limits must be 0–100 with the minimum below the maximum, and contain the initial value.',
                                     f'{axis}_min', f'{axis}_max', f'initial_{axis}')
         if not 0 < self.test_pan_tilt_size <= 50:
             raise SettingsError('Pan/tilt test size must be greater than 0 and at most 50 percentage points.', 'test_pan_tilt_size')
@@ -314,7 +323,8 @@ class Motion:
         elif radius:
             self.xyz[0] = clamp(self.xyz[0] + x / radius * speed * dt, s.x_min, s.x_max)
             self.xyz[1] = clamp(self.xyz[1] + y / radius * speed * dt, s.y_min, s.y_max)
-        self.xyz[2] = s.z
+        if not pan_tilt:
+            self.xyz[2] = s.z
         if s.zoom_enabled:
             value = centred_axis(axes[s.axis_zoom], s.centre_zoom, s.invert_zoom)
             speed = max(0.0, min(1.0, (abs(value) - s.zoom_dead_zone) / (1 - s.zoom_dead_zone))) * s.zoom_speed
@@ -415,6 +425,7 @@ def psn_info_packet(system_name, tracker_id, tracker_name, timestamp_us, frame):
 
 PSN_RATE = 30.0
 PSN_SYSTEM_NAME = 'Followspot'
+PSN_SEND_TIMEOUT = 0.2
 
 
 class PsnStreamer:
@@ -436,14 +447,20 @@ class PsnStreamer:
         self.last_info = None
         self.stopping = threading.Event()
         self.thread = None
+        self._closed = False
         if sock is None:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             try:
+                sock.settimeout(PSN_SEND_TIMEOUT)
                 sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(settings.psn_interface))
                 sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 1)
             except OSError:
                 sock.close()
                 raise
+        elif hasattr(sock, 'settimeout'):
+            # Minimal injected test sockets need only sendto/close; real sockets
+            # always have a deadline so Release cannot leave a blocked worker.
+            sock.settimeout(PSN_SEND_TIMEOUT)
         self.socket = sock
         if start:
             self.thread = threading.Thread(target=self._run, name='psn-stream', daemon=True)
@@ -478,6 +495,8 @@ class PsnStreamer:
             try:
                 self.step()
             except Exception as exc:
+                if self.stopping.is_set() and isinstance(exc, OSError):
+                    return  # Closing the socket can wake an in-flight send.
                 with self.lock:
                     self._error = exc
                 return
@@ -485,9 +504,17 @@ class PsnStreamer:
 
     def close(self):
         self.stopping.set()
-        if self.thread is not None and self.thread is not threading.current_thread():
-            self.thread.join(timeout=1.0)
-        self.socket.close()
+        with self.lock:
+            close_socket = not self._closed
+            self._closed = True
+        try:
+            if close_socket:
+                self.socket.close()
+        finally:
+            if self.thread is not None and self.thread is not threading.current_thread():
+                self.thread.join(timeout=1.0)
+                if self.thread.is_alive():
+                    raise TimeoutError('PSN sender did not stop after closing its socket.')
 
 
 class OscSender:

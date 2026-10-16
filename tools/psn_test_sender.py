@@ -11,6 +11,10 @@ Setup and findings: docs/PSN.md. Local onPC example:
 It does not use settings.json and sends nothing to the OSC port.
 """
 import argparse, math, socket, struct, sys, time
+from contextlib import closing
+import ipaddress
+
+FLOAT32_MAX = float.fromhex('0x1.fffffep+127')
 
 def chunk(cid, payload, sub):
     return struct.pack("<I", cid | (len(payload) << 16) | (int(sub) << 31)) + payload
@@ -52,7 +56,7 @@ def pattern_pos(name, t, home, r):
         p[axis] += off
     return tuple(p), label
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--dest", default="236.10.10.10")
     ap.add_argument("--port", type=int, default=56565)
@@ -63,31 +67,53 @@ def main():
     ap.add_argument("--radius", type=float, default=2.0)
     ap.add_argument("--rate", type=float, default=30.0)
     ap.add_argument("--seconds", type=float, default=60.0)
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
+    if not math.isfinite(a.rate) or a.rate <= 0 or not math.isfinite(1 / a.rate):
+        ap.error('--rate must be finite and positive, with a finite frame interval')
+    if not math.isfinite(a.seconds) or not 0 < a.seconds <= (2**64 - 1) // 1_000_000:
+        ap.error('--seconds must be finite, positive and fit a PSN timestamp')
+    if not 1 <= a.tracker <= 65535:
+        ap.error('--tracker must be 1–65535')
+    if not 1 <= a.port <= 65535:
+        ap.error('--port must be 1–65535')
+    if not math.isfinite(a.radius) or not 0 <= a.radius <= FLOAT32_MAX:
+        ap.error('--radius must be finite, non-negative and fit a 32-bit float')
+    if any(not math.isfinite(v) or abs(v) + a.radius > FLOAT32_MAX for v in a.home):
+        ap.error('--home and its radius must fit finite 32-bit PSN coordinates')
+    try:
+        destination = ipaddress.IPv4Address(a.dest)
+        ipaddress.IPv4Address(a.iface)
+    except ValueError:
+        ap.error('--dest and --iface must be IPv4 addresses')
 
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    if a.dest.startswith("236.") or a.dest.startswith("239."):
-        s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(a.iface))
-        s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 1)
-    addr = (a.dest, a.port)
-    t0 = time.monotonic(); frame = 0; last_info = -1.0; last_label = None
-    print(f"sending to {a.dest}:{a.port} tracker {a.tracker} pattern {a.pattern} for {a.seconds:.0f}s")
-    while True:
-        t = time.monotonic() - t0
-        if t > a.seconds:
-            break
-        ts = int(t * 1e6)
-        if t - last_info >= 1.0:
-            s.sendto(info_packet("Followspot Test", {a.tracker: "Followspot"}, ts, frame), addr)
-            last_info = t
-        pos, label = pattern_pos(a.pattern, t, a.home, a.radius)
-        if label != last_label:
-            print(f"t={t:5.1f}s  {label}")
-            last_label = label
-        s.sendto(data_packet({a.tracker: pos}, ts, frame), addr)
-        frame += 1
-        time.sleep(max(0.0, t0 + (frame / a.rate) - time.monotonic()))
+    with closing(socket.socket(socket.AF_INET, socket.SOCK_DGRAM)) as s:
+        s.settimeout(0.2)
+        if destination.is_multicast:
+            s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(a.iface))
+            s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 1)
+        addr = (a.dest, a.port)
+        t0 = time.monotonic(); frame = 0; last_info = -1.0; last_label = None
+        print(f"sending to {a.dest}:{a.port} tracker {a.tracker} pattern {a.pattern} for {a.seconds:.0f}s")
+        while True:
+            t = time.monotonic() - t0
+            if t >= a.seconds:
+                break
+            ts = int(t * 1e6)
+            if t - last_info >= 1.0:
+                s.sendto(info_packet("Followspot Test", {a.tracker: "Followspot"}, ts, frame), addr)
+                last_info = t
+            pos, label = pattern_pos(a.pattern, t, a.home, a.radius)
+            if label != last_label:
+                print(f"t={t:5.1f}s  {label}")
+                last_label = label
+            s.sendto(data_packet({a.tracker: pos}, ts, frame), addr)
+            frame += 1
+            now = time.monotonic()
+            time.sleep(max(0.0, min(t0 + (frame / a.rate), t0 + a.seconds) - now))
     print("done")
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(130)
