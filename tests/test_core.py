@@ -521,6 +521,10 @@ class PanTiltSettingsTests(unittest.TestCase):
                  ({'pan_min': 60, 'pan_max': 60}, 'pan_min'),
                  ({'pan_min': 60}, 'initial_pan'),
                  ({'tilt_max': 40}, 'initial_tilt'),
+                 ({'initial_tilt': -1}, 'initial_tilt'),
+                 ({'initial_tilt': 101}, 'initial_tilt'),
+                 ({'tilt_min': 40, 'tilt_max': 60, 'initial_tilt': 39}, 'initial_tilt'),
+                 ({'tilt_min': 40, 'tilt_max': 60, 'initial_tilt': 61}, 'initial_tilt'),
                  ({'test_pan_tilt_size': 0}, 'test_pan_tilt_size'),
                  ({'test_pan_tilt_size': 51}, 'test_pan_tilt_size'))
         for changes, field in cases:
@@ -531,7 +535,8 @@ class PanTiltSettingsTests(unittest.TestCase):
 
     def test_pan_tilt_settings_roundtrip(self):
         s = core.Settings.from_dict(dict(core.Settings().to_dict(), control_mode='pan_tilt', fixture_group=4,
-                                         attribute_pan='Pan2', pan_min=10, pan_max=90, initial_pan=20))
+                                         attribute_pan='Pan2', pan_min=10, pan_max=90, initial_pan=20,
+                                         attribute_tilt='Tilt2', tilt_min=20, tilt_max=80, initial_tilt=65))
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'settings.json'
             s.save(path)
@@ -545,6 +550,31 @@ class InactivePathValidationTests(unittest.TestCase):
     """Only the active control mode and position output are range-checked; types are always checked."""
     def load(self, **changes):
         return core.Settings.from_dict(dict(core.Settings().to_dict(), **changes))
+
+    def test_osc_movement_space_span_must_be_finite(self):
+        for axis in ('x', 'y', 'z'):
+            with self.subTest(axis=axis):
+                changes = {f'space_{axis}_min': -1e308, f'space_{axis}_max': 1e308}
+                with self.assertRaises(core.SettingsError) as caught:
+                    self.load(**changes)
+                self.assertEqual(set(caught.exception.fields), set(changes))
+
+    def test_psn_coordinates_and_bounds_must_fit_float32(self):
+        cases = ({'initial_x': 1e40, 'x_max': 1e40, 'space_x_max': 1e40},
+                 {'y_min': -1e40, 'space_y_min': -1e40},
+                 {'z': 1e40, 'space_z_max': 1e40},
+                 {'space_x_max': 1e40})
+        for changes in cases:
+            with self.subTest(changes=changes):
+                with self.assertRaises(core.SettingsError) as caught:
+                    self.load(position_output='psn', **changes)
+                self.assertTrue(set(caught.exception.fields) & set(changes))
+
+    def test_numeric_transport_limits_follow_the_active_path(self):
+        self.load(position_output='osc', x_max=1e40, space_x_max=1e40)
+        self.load(position_output='psn', space_x_min=-1e38, space_x_max=1e38)
+        self.load(control_mode='pan_tilt', space_x_min=-1e308, space_x_max=1e308,
+                  x_max=1e40, initial_x=1e40)
 
     def test_pan_tilt_values_are_not_validated_in_marker_mode(self):
         s = self.load(control_mode='marker', pan_min=60, fixture_group=0, pan_tilt_speed=0,
@@ -634,8 +664,9 @@ class PanTiltTests(unittest.TestCase):
 
     def test_each_mode_leaves_the_other_modes_state_alone(self):
         m = core.Motion(self.settings())
+        m.xyz = [3.0, 4.0, 7.0]
         m.step([1, 0, -1], 0.2)
-        self.assertEqual(m.xyz, [0.0, 0.0, 1.5])
+        self.assertEqual(m.xyz, [3.0, 4.0, 7.0])
         m = core.Motion(core.Settings())
         m.step([1, 0, -1], 0.2)
         self.assertEqual(m.pan_tilt, [50.0, 50.0])

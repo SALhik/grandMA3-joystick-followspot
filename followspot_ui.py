@@ -60,6 +60,9 @@ class FollowspotView:
         self.brightness_context = tk.StringVar()
         self.editing_state = tk.StringVar()
         self.stage_title = tk.StringVar()
+        self.pending_start = tk.StringVar()
+        self.test_context = tk.StringVar()
+        self.stage_cache = None
         # Last state/text applied per widget, so refresh (every poll) only touches Tk on a change.
         self.field_states, self.caption_texts = {}, {}
         self.brightness = tk.DoubleVar()
@@ -171,22 +174,24 @@ class FollowspotView:
         app, ttk = self.app, self.ttk
         outer = ttk.Frame(app.root, padding=16)
         outer.pack(fill='both', expand=True)
-        ttk.Label(outer, text='Joystick Followspot', font=self.title_font).pack(anchor='w')
-        self.label(outer, variable=self.summary).pack(anchor='w', pady=(4, 12))
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(4, weight=1)
+        ttk.Label(outer, text='Joystick Followspot', font=self.title_font).grid(row=0, column=0, sticky='w')
+        self.label(outer, variable=self.summary).grid(row=1, column=0, sticky='ew', pady=(4, 12))
         bar = ttk.Frame(outer)
-        bar.pack(fill='x', pady=(0, 4))
+        bar.grid(row=2, column=0, sticky='ew', pady=(0, 4))
         self.state_label = ttk.Label(bar, textvariable=app.output_label, font=self.state_font)
         self.state_label.pack(side='left')
         app.stop_button = ttk.Button(bar, text='Stop output', command=app.stop_output)
         app.stop_button.pack(side='right', padx=(8, 0))
         app.start_button = ttk.Button(bar, text='Start output', command=app.start_output)
         app.start_button.pack(side='right')
-        self.label(outer, variable=self.readiness).pack(anchor='w', pady=(0, 12))
+        self.label(outer, variable=self.readiness).grid(row=3, column=0, sticky='ew', pady=(0, 12))
         app.notebook = ttk.Notebook(outer)
-        app.notebook.pack(fill='both', expand=True)
-        live = ttk.Frame(app.notebook, padding=16)
+        # Only the notebook shrinks; global controls, status and faults keep their space.
+        app.notebook.grid(row=4, column=0, sticky='nsew')
+        live = self.page(app.notebook, 'Live')
         setup = ttk.Frame(app.notebook, padding=(8, 12))
-        app.notebook.add(live, text='Live')
         app.notebook.add(setup, text='Setup')
         diagnostics = self.page(app.notebook, 'Diagnostics')
         self.diagnostics_page = self.current_page
@@ -208,14 +213,14 @@ class FollowspotView:
         self.current_page = self.diagnostics_page
         self.build_diagnostics(diagnostics)
         self.fault = self.label(outer, variable=app.fault_label, style='Fault.TLabel')
-        self.fault.pack(fill='x', pady=(10, 0))
+        self.fault.grid(row=5, column=0, sticky='ew', pady=(10, 0))
         footer = ttk.Frame(outer)
         self.footer = footer
-        footer.pack(fill='x', pady=(12, 4))
+        footer.grid(row=6, column=0, sticky='ew', pady=(12, 4))
         app.save_button = ttk.Button(footer, text='Save settings', command=app.apply_settings)
         app.save_button.pack(side='right')
         self.label(footer, variable=self.save_state).pack(side='left')
-        self.label(outer, variable=app.status).pack(fill='x')
+        self.label(outer, variable=app.status).grid(row=7, column=0, sticky='ew')
         # Scroll only the page under the pointer; never bind application-wide wheel events.
         for notebook in (app.notebook, self.setup_tabs):
             self.bind_scrolling(notebook)
@@ -238,7 +243,7 @@ class FollowspotView:
         self.zoom_meter.pack(fill='x', pady=8)
         ttk.Label(levels, text='Tracked level · no MA feedback').pack(anchor='w')
         ttk.Label(live, textvariable=app.position_label, font=self.value_font).grid(row=2, column=0, columnspan=2, sticky='w', pady=(12, 6))
-        self.label(live, text='Start sends this target, the current slider brightness and enabled zoom / iris. Values are not feedback from onPC.').grid(row=3, column=0, columnspan=2, sticky='w', pady=(0, 12))
+        self.label(live, variable=self.pending_start).grid(row=3, column=0, columnspan=2, sticky='w', pady=(0, 12))
         ttk.Separator(live).grid(row=4, column=0, columnspan=2, sticky='ew', pady=(0, 12))
         reset = ttk.Frame(live)
         reset.grid(row=5, column=0, columnspan=2, sticky='ew')
@@ -247,7 +252,7 @@ class FollowspotView:
         ttk.Checkbutton(reset, text='Lock reset while running', variable=app.values['reset_locked'],
                         command=app.set_reset_lock).pack(side='left')
         # refresh packs this only when PSN is selected or a stream is held.
-        app.release_button = ttk.Button(reset, text='Release marker', command=app.release_marker)
+        app.release_button = ttk.Button(reset, text='Release marker', command=app.confirm_release_marker)
         self.label(live, variable=self.reset_state).grid(row=6, column=0, columnspan=2, sticky='w', pady=(8, 0))
 
     def axis_row(self, parent, row, label, key, invert):
@@ -383,7 +388,9 @@ class FollowspotView:
         app.button_table.grid(row=0, column=0, sticky='ew')
         scroll = ttk.Scrollbar(parent, orient='horizontal', command=(app.button_table._w, 'xview'))
         scroll.grid(row=1, column=0, sticky='ew')
-        app.button_table.configure(xscrollcommand=(scroll._w, 'set'))
+        vertical = ttk.Scrollbar(parent, orient='vertical', command=(app.button_table._w, 'yview'))
+        vertical.grid(row=0, column=1, sticky='ns')
+        app.button_table.configure(xscrollcommand=(scroll._w, 'set'), yscrollcommand=(vertical._w, 'set'))
         app.button_table.bind('<<TreeviewSelect>>', app.load_button)
         app.button_id = self.tk.StringVar(value='0')
         app.button_action = self.tk.StringVar(value=BUTTON_ACTIONS['command'])
@@ -428,7 +435,7 @@ class FollowspotView:
         self.entry(parent, 6, 'Test brightness (%)', 'test_brightness')
         app.test_button = ttk.Button(parent, text='Start test (figure 8)', command=lambda: app.start_output(test=True))
         app.test_button.grid(row=7, column=0, sticky='w', pady=8)
-        self.label(parent, text='No joystick needed. Sends OSC around the initial target (marker or pan/tilt, per the applied control mode) at the test brightness; joystick input is ignored. Use Stop output above to end the test.').grid(row=8, column=0, columnspan=3, sticky='w', pady=4)
+        self.label(parent, variable=self.test_context).grid(row=8, column=0, columnspan=3, sticky='w', pady=4)
         ttk.Label(parent, text='OSC reception', font=self.state_font).grid(row=9, column=0, columnspan=3, sticky='w', pady=(20, 8))
         self.label(parent, text='UDP send success does not confirm reception. In onPC, use EchoInput and System Monitor to check incoming commands. Check Input, Receive, Receive Command, Interface/IP, port and prefix.').grid(row=10, column=0, columnspan=3, sticky='w')
         self.label(parent, variable=app.fault_label, style='Fault.TLabel').grid(row=11, column=0, columnspan=3, sticky='w', pady=12)
@@ -493,36 +500,50 @@ class FollowspotView:
                          (f'  ·  PSN tracker {s.psn_tracker_id} → {s.psn_group}:{s.psn_port} via {s.psn_interface}'
                           if not pan_tilt and s.position_output == 'psn' else ''))
         self.stage_title.set('Pan / tilt' if pan_tilt else 'Tracked target · top view')
-        reason = ''
+        preflight_error = None
+        try:
+            candidate = app.preflight_settings(mapping_pending=pending)
+        except ValueError as exc:
+            candidate = None
+            preflight_error = exc
+        test_ready = not active and not app.learning and candidate is not None
+        ready = test_ready and bool(app.joystick and app.joystick.handle)
         if active:
-            reason = 'OSC sent · reception unconfirmed' + (' · joystick ignored during test' if app.controller.test else '')
+            transport = 'PSN + OSC' if not pan_tilt and s.position_output == 'psn' else 'OSC'
+            reason = transport + ' sent · reception unconfirmed' + (' · joystick ignored during test' if app.controller.test else '')
         elif app.learning:
-            reason = 'Finish learning before starting output.'
-        elif not (app.joystick and app.joystick.handle):
-            reason = 'Select a joystick in Setup → Joystick; Refresh after reconnecting.'
-        elif pending:
-            reason = 'Finish the button mapping in Setup → Buttons before starting.'
-        elif draft is None:
-            reason = 'Check settings in Setup before starting; Save settings identifies invalid fields.'
+            reason = 'Finish learning before starting output or a test.'
+        elif preflight_error is not None:
+            fields = ', '.join(getattr(preflight_error, 'fields', ()))
+            reason = f'Start / test blocked: {preflight_error}' + (f' ({fields})' if fields else '')
+            if draft is None:
+                reason = 'Check settings before starting output or a test: ' + reason
+        elif not ready:
+            reason = 'Select a joystick in Setup → Joystick; Refresh after reconnecting. Figure 8 test is ready without a joystick.'
         else:
-            try:
-                Motion(draft).check_axes(app.axes)
-                reason = 'Ready · Start sends the displayed target and current slider brightness.'
-            except ValueError:
-                reason = 'Check axis mappings in Setup → Joystick before starting.'
-        self.readiness.set(reason)
-        ready = not active and not app.learning and not pending and draft is not None and bool(app.joystick and app.joystick.handle)
+            reason = 'Ready · Start sends the pending values below.'
         if ready:
             try:
-                Motion(draft).check_axes(app.axes)
+                Motion(candidate).check_axes(app.axes)
             except ValueError:
                 ready = False
-            if any(int(key) >= len(app.buttons) for key in draft.buttons):
+                reason = 'Check axis mappings in Setup → Joystick before starting. Figure 8 test is ready.'
+            if any(int(key) >= len(app.buttons) for key in candidate.buttons):
                 ready = False
-                self.readiness.set('Check button numbers in Setup → Buttons before starting.')
+                reason = 'Check button numbers in Setup → Buttons before starting. Figure 8 test is ready.'
+        self.readiness.set(reason)
         app.start_button.configure(state='normal' if ready else 'disabled')
         app.stop_button.configure(state='normal' if active else 'disabled')
-        app.test_button.configure(state='disabled' if active or app.learning or pending or draft is None else 'normal')
+        app.test_button.configure(state='normal' if test_ready else 'disabled')
+        if not active:
+            app.output_label.set('OUTPUT STOPPED · PSN HOLDING' if app.streamer is not None else 'OUTPUT STOPPED')
+        self.update_pending_preview(candidate, preflight_error)
+        test_settings = draft or s
+        transport = ('PSN marker positions plus OSC brightness and enabled zoom / iris'
+                     if test_settings.control_mode == 'marker' and test_settings.position_output == 'psn'
+                     else 'OSC pan / tilt and levels' if test_settings.control_mode == 'pan_tilt' else 'OSC marker positions and levels')
+        self.test_context.set('No joystick needed. Start test applies the draft, then sends ' + transport +
+                              ' around the initial target at the test brightness; joystick input is ignored. Use Stop output to end the test.')
         app.save_button.configure(state='disabled' if active else 'normal')
         app.reset_button.configure(state='disabled' if active and s.reset_locked else 'normal')
         if (s.control_mode == 'marker' and s.position_output == 'psn') or app.streamer is not None:
@@ -559,11 +580,34 @@ class FollowspotView:
                 text.set('Input —')
                 meter.set(50)
         if app.fault_label.get():
-            self.fault.pack(fill='x', pady=(10, 0), before=self.footer)
+            self.fault.grid()
         else:
-            self.fault.pack_forget()
+            self.fault.grid_remove()
         self.release_ack.configure(state='normal' if 'release' in app.faults else 'disabled')
         self.draw_stage()
+
+    def update_pending_preview(self, settings, error):
+        app = self.app
+        if app.controller.active:
+            self.pending_start.set('Applied values · no feedback from onPC. Stop output to preview pending Start values.')
+            return
+        if settings is None:
+            self.pending_start.set(f'Pending Start unavailable: {error}')
+            return
+        motion = app.pending_motion(settings)
+        if settings.control_mode == 'pan_tilt':
+            target = f'Group {settings.fixture_group}: Pan {motion.pan_tilt[0]:.2f}% · Tilt {motion.pan_tilt[1]:.2f}%'
+        else:
+            marker = f'PSN tracker {settings.psn_tracker_id}' if settings.position_output == 'psn' else f'MArker {settings.marker_id}'
+            target = f'{marker}: X {motion.xyz[0]:.2f} · Y {motion.xyz[1]:.2f} · Z {motion.xyz[2]:.2f} m'
+        try:
+            if not (app.joystick and app.joystick.handle):
+                raise ValueError
+            brightness = f'{motion.brightness(app.axes):.1f}%'
+        except ValueError:
+            brightness = 'unavailable until a valid joystick is connected'
+        zoom = f'{motion.zoom_level:.1f}%' if settings.zoom_enabled else 'off'
+        self.pending_start.set(f'Pending Start · {target} · Brightness {brightness} · Zoom / iris {zoom}. Draft settings will be applied; no MA feedback.')
 
     def hidden_fields(self):
         """Fields of the inactive control mode / position output, from the draft selectors (not the parsed draft)."""
@@ -592,11 +636,9 @@ class FollowspotView:
         if self.app.button_action.get() != BUTTON_ACTIONS['command']:
             # Local actions cannot carry MA commands, whatever the run state.
             inapplicable |= {self.app.press_entry, self.app.release_entry}
-        # update_button_editor also writes these two, so the cache cannot be trusted for them.
-        written_elsewhere = {self.app.press_entry, self.app.release_entry}
         for widget, base in self.editable:
             state = 'disabled' if running or widget in inapplicable else base
-            current = str(widget.cget('state')) if widget in written_elsewhere else self.field_states.get(widget)
+            current = self.field_states.get(widget)
             if current != state:
                 widget.configure(state=state)
                 self.field_states[widget] = state
@@ -611,7 +653,6 @@ class FollowspotView:
 
     def set_running(self, running):
         # refresh() recomputes every editor's state from controller.active and the draft mode.
-        self.app.update_button_editor()
         self.refresh()
 
     def clear_errors(self):
@@ -662,7 +703,11 @@ class FollowspotView:
         return f'Switch {selector} to {CHOICE_LABELS[key][value]} (Setup → {tab}) to correct it.'
 
     def reveal(self, body, widget):
+        if not body.winfo_exists() or not widget.winfo_exists():
+            return
         canvas = body.scroll_canvas
+        if not canvas.winfo_exists():
+            return
         if body.winfo_height() > canvas.winfo_height():
             y = widget.winfo_rooty() - body.winfo_rooty()
             top = canvas.canvasy(0)
@@ -682,6 +727,8 @@ class FollowspotView:
         for child in parent.winfo_children():
             self.bind_scrolling(child)
         widget = parent
+        if widget.winfo_class() == 'Treeview':
+            return  # Keep the table's native wheel binding; the page must not intercept it.
         body = widget
         while body is not None and not hasattr(body, 'scroll_canvas'):
             body = body.master
@@ -694,7 +741,7 @@ class FollowspotView:
                     return 'break'
             for event in ('<MouseWheel>', '<Button-4>', '<Button-5>'):
                 widget.bind(event, wheel, add='+')
-            if widget.winfo_class() in ('TEntry', 'TCombobox'):
+            if widget.winfo_class() in ('TEntry', 'TCombobox', 'TButton', 'TCheckbutton'):
                 widget.bind('<FocusIn>', lambda event, b=body, w=widget: self.reveal(b, w), add='+')
 
     def resize(self):
@@ -719,6 +766,13 @@ class FollowspotView:
             x_name, y_name, unit = 'X', 'Y', ' m'
             x, y, _ = self.app.controller.motion.xyz
         width, height = max(160, canvas.winfo_width()), max(130, canvas.winfo_height())
+        held = (tuple(self.app.streamer.position) if not pan_tilt and self.app.streamer is not None
+                and not self.app.controller.active else None)
+        cache = (pan_tilt, x_min, x_max, y_min, y_max, x, y, width, height, held,
+                 self.foreground, self.background)
+        if self.stage_cache == cache:
+            return
+        self.stage_cache = cache
         scale = min((width - 90) / (x_max - x_min), (height - 65) / (y_max - y_min))
         stage_width, stage_height = (x_max - x_min) * scale, (y_max - y_min) * scale
         left, top = (width - stage_width) / 2, (height - stage_height) / 2
@@ -733,8 +787,8 @@ class FollowspotView:
         px = left + (clamp(x, x_min, x_max) - x_min) * scale
         py = bottom - (clamp(y, y_min, y_max) - y_min) * scale
         canvas.create_oval(px-5, py-5, px+5, py+5, fill=color, outline=color, tags='target')
-        if not pan_tilt and self.app.streamer is not None and not self.app.controller.active:
-            hx, hy, _ = self.app.streamer.position
+        if held is not None:
+            hx, hy, _ = held
             hpx = left + (clamp(hx, x_min, x_max) - x_min) * scale
             hpy = bottom - (clamp(hy, y_min, y_max) - y_min) * scale
             canvas.create_oval(hpx-8, hpy-8, hpx+8, hpy+8, outline=color, dash=(3, 2), tags='held')

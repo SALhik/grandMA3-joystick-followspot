@@ -11,13 +11,14 @@ All physical fixture assignment and aiming stay in grandMA3. This tool does not 
 | [docs/GRANDMA3_SETUP.md](docs/GRANDMA3_SETUP.md) | Step-by-step onPC setup with every command, the figure-8 test, troubleshooting |
 | [docs/OPERATING.md](docs/OPERATING.md) | Joystick configuration, marker or pan/tilt control, buttons, reset lock, zoom/iris, test mode, stop/restart, settings file, limitations |
 | [docs/PSN.md](docs/PSN.md) | Optional PSN position output that moves the MArker without taking the console selection: app and onPC setup, Stop vs Release marker, findings, test sender, packet format (checked with the test sender only) |
+| [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) | Recorded verification and pending checks for onPC, physical input, long-running PSN, Windows and visual/keyboard operation |
 | [AGENTS.md](AGENTS.md) | For AI agents and contributors: code map, workflow, integration contracts, verification limits |
 
 ## Quick start
 
 1. Set up onPC on a test show by following [docs/GRANDMA3_SETUP.md](docs/GRANDMA3_SETUP.md). The script does not edit your showfile.
 2. Launch the tool (below). Output starts **stopped** every time.
-3. In **Diagnostics**, check the setup with **Start test (figure 8)**; no joystick is needed. This sends real OSC output.
+3. In **Diagnostics**, check the setup with **Start test (figure 8)**; no joystick is needed. This sends real output using the selected position transport and OSC levels.
 4. Connect and calibrate the joystick, then start output, as described in [docs/OPERATING.md](docs/OPERATING.md).
 
 ## Launch
@@ -53,7 +54,7 @@ If the window says **macOS denied input access**, the controller was detected bu
 
 ## Diagnostics and tests
 
-None of these transmit OSC:
+These commands do not transmit output to onPC. Automated tests use fake transports or local loopback receivers:
 
 ```sh
 python3 followspot.py --list-devices
@@ -67,3 +68,5 @@ python3 -m unittest discover -s tests -v
 - The CLI commands do not need Tk, so Homebrew Python works even without `_tkinter`. The real-window tests skip when Tk is unavailable.
 
 Automated tests cannot prove end-to-end operation; see the limitations in [docs/OPERATING.md](docs/OPERATING.md) and the development checks in [AGENTS.md](AGENTS.md).
+
+GitHub Actions runs headless tests on Linux and Windows with Python 3.10 and the latest stable Python, plus macOS native input and available real-Tk tests. GUI and platform skips are printed in the test output; a green headless job does not establish GUI or hardware operation. For a restricted terminal that cannot create Tk windows, use `FOLLOWSPOT_TEST_HEADLESS=1 python3 -m unittest discover -s tests -v` to explicitly skip GUI tests. This flag affects tests only.

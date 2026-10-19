@@ -1,6 +1,6 @@
 # grandMA3 setup, step by step
 
-Follow these in order on a **test show**. Each step says what to do and how to check it. Stage geometry, patching and executor storage are done in onPC; this tool only sends OSC.
+Follow these in order on a **test show**. Each step says what to do and how to check it. Stage geometry, patching and executor storage are done in onPC; this tool sends OSC, with optional PSN marker positions.
 
 Commands in `code blocks` are typed on the onPC command line. `Group 1`, `MArker 1`, `Sequence 201` and `Executor 1.201` are examples: use your own IDs, and keep the same numbers in the tool's window.
 
@@ -81,6 +81,8 @@ In the master controls menu, tap **Prog Time** until its green marker disappears
 
 ## Step 8. Enable OSC input
 
+Use OSC on the trusted local/control network intended for your show. MA's [`/cmd` input](https://help.malighting.com/grandMA3/2.5/HTML/remote_inputs_osc.html) accepts console command-line instructions; restrict network access to that input and review imported button commands before enabling output.
+
 1. **Menu → In & Out → OSC**.
 2. Enable **Input** at the top.
 3. Add a row with:
@@ -147,7 +149,7 @@ Do this after the brightness executor works. The tool controls only a fader leve
 5. Keep **FaderRange = 100** on the OSC row (Step 8).
 6. In the tool open **Setup → Brightness / zoom**, enable the axis, enter the executor page and number, then learn and calibrate the axis (see [OPERATING.md](OPERATING.md#optional-zoom--iris-control)).
 
-Check: a figure-8 test with the axis enabled sends the initial zoom/iris level once but does not move it, because the joystick is ignored in a test. Confirm zoom/iris movement with the joystick.
+Check: a figure-8 test with the axis enabled sends the current tracked zoom/iris level once but does not move it, because the joystick is ignored in a test. Reset or relaunch uses the initial zoom/iris level. Confirm zoom/iris movement with the joystick.
 
 ## Optional: pan/tilt control
 
@@ -157,10 +159,10 @@ Use this instead of Steps 2-5 when you want the stick to drive pan and tilt dire
 2. Run `List Attribute` and confirm the pan and tilt attribute names in your fixture library (normally `Pan` and `Tilt`).
 3. Select the group and set the dimmer, with no MArker or XYZ lines (Step 6 stores exactly this):
 
-```text
-Group 1
-At 100
-```
+   ```text
+   Group 1
+   At 100
+   ```
 
    Replace `Group 1` with your group. Leave this in the programmer and continue with Step 6 (store the cue on a Master executor), Step 7 (Programmer Time off) and Step 8 (OSC input). Then come back here.
 4. In the tool, open **Setup → Target**, set **Control** to **Pan / tilt**, and enter the **Fixture group**, the attribute names, the pan/tilt limits and the initial pan / tilt (the MArker fields are hidden in this mode). Set the speed on the **Joystick** page. Also fill the brightness executor on **Brightness / zoom** (Step 9) and the OSC host / port. Click **Save settings**.
@@ -169,7 +171,7 @@ At 100
 
 Each update sends `ClearSelection; Group <n>; Attribute "Pan" At Absolute Percent <p>; Attribute "Tilt" At Absolute Percent <t>`. The installed MA 2.5 files support the pieces: `resource/attribute_definitions.xml` defines `Pan` and `Tilt` with a physical (degree) readout, which is why the command uses `At Absolute Percent`; the system tests use `Attribute 'Pan' At Relative Percent 10` and select a group by name followed by a semicolon. That OSC accepts this exact string and moves the lights is **not yet confirmed**.
 
-Check on a test show, and tell the maintainers what you see: the lights move; 0-100% covers the fixture's full pan/tilt range; the default tilt direction; what happens to fixtures that were following a MArker when you switch to pan/tilt; what happens when you switch back from pan/tilt to marker (pan/tilt values left in the programmer might override the stored XYZ-MArker playback; this is an inference and has not been observed); and whether the encoder wheels really are unusable while output runs.
+Record the real-show results using the [pan/tilt acceptance checks](ACCEPTANCE.md#console-and-physical-input). They cover fixture range/direction, mode switching and console selection behavior; these outcomes remain unverified.
 
 ## References
 

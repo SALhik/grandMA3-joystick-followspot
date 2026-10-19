@@ -17,6 +17,7 @@ class SDLJoystick:
                       '/Library/Frameworks/SDL2.framework/SDL2']
         self.lib = None
         self.handle = None
+        self.instances = {}
         for candidate in candidates:
             if not candidate:
                 continue
@@ -36,6 +37,8 @@ class SDLJoystick:
             'SDL_ClearError': ([], None),
             'SDL_NumJoysticks': ([], ct.c_int),
             'SDL_JoystickNameForIndex': ([ct.c_int], ct.c_char_p),
+            'SDL_JoystickGetDeviceInstanceID': ([ct.c_int], ct.c_int32),
+            'SDL_JoystickInstanceID': ([ct.c_void_p], ct.c_int32),
             'SDL_JoystickOpen': ([ct.c_int], ct.c_void_p),
             'SDL_JoystickClose': ([ct.c_void_p], None),
             'SDL_JoystickGetAttached': ([ct.c_void_p], ct.c_int),
@@ -44,6 +47,7 @@ class SDLJoystick:
             'SDL_JoystickGetAxis': ([ct.c_void_p, ct.c_int], ct.c_int16),
             'SDL_JoystickGetButton': ([ct.c_void_p, ct.c_int], ct.c_uint8),
             'SDL_JoystickUpdate': ([], None),
+            'SDL_JoystickEventState': ([ct.c_int], ct.c_int),
             'SDL_PumpEvents': ([], None),
         }
         for name, (args, result) in signatures.items():
@@ -52,6 +56,8 @@ class SDLJoystick:
         self.lib.SDL_SetHint(b'SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS', b'1')
         if self.lib.SDL_InitSubSystem(0x200) != 0:
             raise RuntimeError(self.error())
+        # We poll state explicitly; unused motion/hotplug events need no queue.
+        self.lib.SDL_JoystickEventState(0)
 
     def error(self):
         return (self.lib.SDL_GetError() or b'Unknown SDL error').decode('utf-8', 'replace')
@@ -65,14 +71,35 @@ class SDLJoystick:
         count = self.lib.SDL_NumJoysticks()
         if count < 0:
             raise RuntimeError(self.error())
-        return [(i, (self.lib.SDL_JoystickNameForIndex(i) or b'Unnamed joystick').decode('utf-8', 'replace'))
-                for i in range(count)]
+        devices, instances = [], {}
+        for index in range(count):
+            instance = self.lib.SDL_JoystickGetDeviceInstanceID(index)
+            if instance < 0:
+                raise ConnectionError('Joystick list changed. Click Refresh and select it again.')
+            instances[index] = instance
+            name = (self.lib.SDL_JoystickNameForIndex(index) or b'Unnamed joystick').decode('utf-8', 'replace')
+            devices.append((index, name))
+        self.instances = instances
+        return devices
 
     def open(self, index):
         self.close()
-        self.handle = self.lib.SDL_JoystickOpen(index)
+        instance = self.instances.get(index)
+        self.update()
+        count = self.lib.SDL_NumJoysticks()
+        if count < 0:
+            raise ConnectionError(self.error())
+        current_index = next((i for i in range(count)
+                              if self.lib.SDL_JoystickGetDeviceInstanceID(i) == instance), None)
+        if instance is None or current_index is None:
+            raise ConnectionError('Joystick list changed. Click Refresh and select it again.')
+        self.handle = self.lib.SDL_JoystickOpen(current_index)
         if not self.handle:
             raise ConnectionError(self.error())
+        # Removal between resolving the index and opening must not select a peer.
+        if self.lib.SDL_JoystickInstanceID(self.handle) != instance:
+            self.close()
+            raise ConnectionError('Joystick list changed. Click Refresh and select it again.')
         self.axis_count = self.lib.SDL_JoystickNumAxes(self.handle)
         self.button_count = self.lib.SDL_JoystickNumButtons(self.handle)
         if self.axis_count < 0 or self.button_count < 0:

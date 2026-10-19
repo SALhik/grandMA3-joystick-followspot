@@ -1,5 +1,6 @@
 """Window behaviour tested without requiring macOS WindowServer access."""
 import unittest
+import os
 import tempfile
 import time
 import subprocess
@@ -102,7 +103,7 @@ class WindowTests(unittest.TestCase):
             for name in ('start_button', 'test_button', 'save_button'):
                 getattr(app, name).configure(state='disabled' if running else 'normal')
             app.reset_button.configure(state='disabled' if running and app.settings.reset_locked else 'normal')
-        app.view = SimpleNamespace(refresh=lambda: None, set_running=set_running,
+        app.view = SimpleNamespace(refresh=lambda: None, set_running=set_running, apply_field_states=lambda: None,
                                    show_error=lambda exc: None, clear_errors=lambda: None,
                                    mapping_pending=lambda: False, editor_loaded=lambda: None,
                                    set_feedback=lambda *args: None, restore_selection=lambda: None)
@@ -879,6 +880,7 @@ class FakeJoystick:
         self.close()
 
 
+@unittest.skipIf(os.environ.get('FOLLOWSPOT_TEST_HEADLESS') == '1', 'Tk disabled by FOLLOWSPOT_TEST_HEADLESS')
 class RealWindowTests(unittest.TestCase):
     """Run the real __init__/build_window wiring when Tk can open a window."""
     def open_root(self):
@@ -973,7 +975,8 @@ with tempfile.TemporaryDirectory() as folder:
             app.root.update_idletasks()
             app.view.draw_stage()
             self.assertTrue(app.view.stage.find_withtag('held'))
-            app.release_button.invoke()
+            with patch.object(app.messagebox, 'askokcancel', return_value=True):
+                app.release_button.invoke()
             self.assertIsNone(app.streamer)
             app.view.draw_stage()
             self.assertFalse(app.view.stage.find_withtag('held'))

@@ -46,11 +46,13 @@ current code and Git state, and preserve unrelated operator changes.
 | `requirements.txt` | Comment-only: records that there are no third-party packages |
 | `.coderabbit.yaml` | Review-bot configuration (docstring check off) |
 | `tools/psn_test_sender.py` | Stdlib PSN test sender for onPC; not imported by the app, which has its own `PsnStreamer` (see docs/PSN.md) |
+| `.github/workflows/tests.yml` | Linux/Windows headless and macOS Tk/native CI; GUI skips remain explicit |
 | `tests/` | Core behavior, PSN encoder/streamer, device backend, and headless window lifecycle tests |
 | `README.md` | Short overview: documentation index, quick start, launch, diagnostics |
 | `docs/GRANDMA3_SETUP.md` | Operator step-by-step onPC setup with commands, zoom/iris executor, troubleshooting |
 | `docs/OPERATING.md` | Operator guide: joystick, buttons, reset lock, zoom/iris, test mode, stop/restart, limitations |
 | `docs/PSN.md` | PSN output guide: app and onPC setup, Stop vs Release marker, verified findings, unverified other-computer setup, troubleshooting, packet format, open risks |
+| `docs/ACCEPTANCE.md` | Single record/checklist for automated, visual, physical/onPC, long-run PSN and Windows verification |
 | `docs/superpowers/` | Original approved design and implementation plan; historical context |
 
 Runtime `settings.json` is operator-owned and ignored by Git. Do not overwrite
@@ -84,8 +86,10 @@ failures; never report skipped or blocked hardware checks as passing.
 
 ## Integration contracts
 
-- Output starts stopped. Start applies settings and sends the displayed target,
-  current slider level and enabled zoom/iris level. There is no position or fader feedback from MA.
+- Output starts stopped. Start applies settings and sends the target, current slider
+  level and enabled zoom/iris shown in the pending Start preview. Live retains applied
+  settings; pending mode, bounds, Z and brightness mapping changes are explicit in the
+  separate preview. There is no position or fader feedback from MA.
 - Normal polling is approximately 30 Hz. Suppress duplicate output; there is no
   idle resend of OSC output (it would retake the console selection and fader; PSN streaming
   is the exception below). A long sample
@@ -120,6 +124,11 @@ failures; never report skipped or blocked hardware checks as passing.
   `psn_*` fields are range-checked and `attribute_x/y/z` are not; with OSC the reverse.
   `marker_id` and the Movement Space are still checked in PSN mode even though PSN
   does not use them for conversion.
+  The window Release button confirms whenever a stream is open; mapped Release remains
+  immediate. Stopped output with an open stream is prominently labelled PSN HOLDING.
+  Readiness and apply share the held-stream settings guard, so changed PSN fields block
+  normal and test Start until released or reverted. A new figure-8 stream is seeded with
+  the test's initial target before its worker can send DATA.
 - Control mode (`control_mode` = `marker` default or `pan_tilt`). `pan_tilt` is
   OSC only: `Controller` sends `ClearSelection; Group <fixture_group>; Attribute
   "Pan" At Absolute Percent <p>; Attribute "Tilt" At Absolute Percent <t>` only
@@ -232,9 +241,12 @@ the required CoreFoundation objects, and release them during cleanup. Respect
 macOS access denials; do not treat an empty SDL list as proof that Input
 Monitoring permission is missing.
 
-Some agent sandboxes deny native Tk window creation, and some Python installs
-(for example Homebrew's default `python3`) lack `_tkinter`; the real-window
-tests skip in both cases. Sandboxes may also deny physical HID reads, process
+Some agent sandboxes abort the interpreter during native Tk window creation, and
+some Python installs (for example Homebrew's default `python3`) lack `_tkinter`.
+Use `FOLLOWSPOT_TEST_HEADLESS=1` to explicitly skip real-window tests in a restricted
+environment; this is a test-only flag. Missing Tk or recoverable Tcl window errors
+also produce explicit skips. CI probes macOS Tk in a subprocess before the suite.
+Sandboxes may also deny physical HID reads, process
 inspection, UDP operations, or network/GitHub access. Automated tests and packet
 encoding checks cannot establish end-to-end operation. Use a normal macOS
 Terminal and a test show for manual input, OSC reception, marker movement,
@@ -256,9 +268,8 @@ MArker without touching the console selection or encoders (multicast
 PSN position output was implemented on 2026-10-14 (branch `feat/psn-output`) and
 is covered by automated tests only. It is not verified with the real joystick,
 a real show, onPC receiving the app's own stream, onPC on another computer or
-Windows, and the Live view and Setup layout were not checked visually; see
-docs/PSN.md, section Remaining work, for the operator checklist, the open
-Release marker confirmation decision and the known minor issues.
+Windows, and the Live view and Setup layout were not checked visually by the
+operator; see docs/ACCEPTANCE.md for recorded evidence and the pending operator checks.
 
 Added since then: proportional zoom/iris axis, the figure-8 test mode with the
 step-by-step setup guide, and the Windows launcher. None has operator
@@ -280,48 +291,28 @@ mode, zoom/iris editors are disabled while it is off, and the selectors show lab
 Validation now skips the inactive path (see Control mode). Covered by automated tests
 only; the real window layout has not been checked visually by the operator.
 
-Known minor issues in the pan/tilt work (found in review, not fixed):
+Review hardening on 2026-10-16 adds SDL instance identity checks, bounded PSN sends,
+active-path numeric representability checks, diagnostic argument validation, a shared
+preflight/Start preview and deliberate window Release. UI drawing avoids unchanged
+repaints, command-entry states have one owner, and delayed reveal callbacks are guarded.
+The operator changes and remaining environment checks are documented in OPERATING.md,
+PSN.md and ACCEPTANCE.md rather than repeated here.
 
-- A full-suite run once printed three Tk `invalid command name ...<lambda>` lines.
-  `show_error` queues `after_idle(reveal)`, and
-  `test_error_in_a_hidden_or_disabled_field_says_how_to_reach_it` can end without draining
-  idle events. It is test noise, was not reproduced in later runs and is not a
-  product fault. Fix: `update_idletasks()` in the test or a `winfo_exists` guard
-  in `reveal`.
-- The Press / Release command entries are owned by two code paths,
-  `update_button_editor` and `apply_field_states`. They agree today (a regression
-  test pins Start / Stop with a local action loaded); a single owner would be safer.
-- Test gaps: no test of a mapped Reset in pan/tilt mode skipping integration (the
-  `dt = 0` path is mode-agnostic), of the Diagnostics row shift, or of `show_error`
-  focusing a disabled widget. The settings round-trip test covers pan only, the
-  range-error tests are loose (`initial_tilt` is not tested on its own), and the
-  core `control_mode` guard test only asserts that the key is in `PSN_FIELDS`
-  (a window test covers the behaviour).
-- `Motion.step` still writes `xyz[2] = z` in pan/tilt mode (harmless).
-- The pan/tilt range error uses "0-100" with a hyphen where neighbouring messages
-  use an en dash.
-- With no PSN stream, Release marker (button or mapped action) in pan/tilt mode
-  only sets the status "No PSN stream is open."; the mapped-button action is
-  labelled "Release PSN marker" elsewhere. The command string is quoted in
-  docs/OPERATING.md, docs/GRANDMA3_SETUP.md and here.
-- In docs/GRANDMA3_SETUP.md the code fence inside the numbered pan/tilt list may
-  render the next item as a new list. The historical plan
-  `docs/superpowers/plans/2026-10-15-pan-tilt-control.md` still carries earlier
-  wording of some docs text; leave it.
-- Design choices, not defects: Start sends the displayed pan/tilt to the whole
-  group at full speed (first use snaps to 50 / 50); one group and one pan/tilt
-  pair for all fixtures (no per-fixture values); a settings file saved by this
-  version is refused by an older checkout.
+Design choices retained: first pan/tilt use sends 50 / 50 to the whole group at full
+speed; one group and one pair serve all fixtures; older checkouts reject newer settings
+keys. Release with no open stream still reports "No PSN stream is open." Historical
+plans describe their original version and should not be rewritten to match later work.
 
 Automated coverage: core motion/configuration/OSC-packet tests, simulated SDL
-input/disconnect, native HID discovery and combined-list tests with doubles,
-PSN encoder (pinned bytes), streamer (injected sockets; one real socket open, no packet is
-received by a real listener) and controller tests, headless window lifecycle tests (including
+input/disconnect and hotplug identity, native HID discovery and ownership/failure tests
+with doubles, PSN encoder (pinned bytes), streamer (injected sockets and bounded shutdown),
+local UDP receiver tests and controller tests, headless window lifecycle tests (including
 zoom/iris, test mode and PSN stream hold/release/close, faults and button priority), real Tk
 workflow tests, pan/tilt coverage in each layer (core motion, validation and OSC-string tests;
 headless window tests; real Tk tests for the selectors, hidden sections matching `inactive_fields`, captions and error labels), and a visible startup test with the real backend. Tk tests skip
 when Tk is missing or cannot open a window. The
-Windows launcher has no automated coverage. MA's installed 2.5 system tests
+launcher Python/Tk probes have automated coverage; actual Windows launcher/runtime and
+physical operation remain unverified until recorded. MA's installed 2.5 system tests
 confirm the `XYZ_X`, `XYZ_Y`, `XYZ_Z`, and `XYZ_MArker` attribute names.
 
 Keep changes compact and follow existing style. Update README,

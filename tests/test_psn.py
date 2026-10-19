@@ -4,6 +4,7 @@ import struct
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 import followspot_core as core
 
@@ -78,6 +79,30 @@ class FakeSocket:
         self.closed = True
 
 
+class StalledSocket(FakeSocket):
+    """A send blocks until its configured deadline or socket closure."""
+    def __init__(self):
+        super().__init__()
+        self.timeout = 2.0
+        self.entered = threading.Event()
+        self.wake = threading.Event()
+
+    def settimeout(self, timeout):
+        self.timeout = timeout
+
+    def sendto(self, data, destination):
+        self.entered.set()
+        if self.wake.wait(self.timeout):
+            # Closing a socket need not return from the sender immediately.
+            time.sleep(0.02)
+            raise OSError('socket closed')
+        raise TimeoutError('send timed out')
+
+    def close(self):
+        super().close()
+        self.wake.set()
+
+
 def streamer(clock, sock=None, start=False, **changes):
     settings = core.Settings.from_dict(dict(core.Settings().to_dict(), position_output='psn', **changes))
     sock = sock or FakeSocket()
@@ -85,6 +110,35 @@ def streamer(clock, sock=None, start=False, **changes):
 
 
 class PsnStreamerTests(unittest.TestCase):
+    def test_stalled_send_times_out_and_is_observable(self):
+        sock = StalledSocket()
+        s, _ = streamer(time.monotonic, sock=sock, start=True)
+        try:
+            self.assertTrue(sock.entered.wait(1))
+            s.thread.join(0.6)
+            self.assertFalse(s.thread.is_alive(), 'send must have a bounded deadline')
+            self.assertIsInstance(s.poll_error(), TimeoutError)
+        finally:
+            s.close()
+
+    def test_close_wakes_stalled_send_and_waits_for_worker_exit(self):
+        sock = StalledSocket()
+        s, _ = streamer(time.monotonic, sock=sock, start=True)
+        self.assertTrue(sock.entered.wait(1))
+        began = time.monotonic()
+        s.close()
+        self.assertLess(time.monotonic() - began, 0.6)
+        self.assertFalse(s.thread.is_alive())
+        self.assertIsNone(s.poll_error(), 'requested shutdown is not a network fault')
+        s.close()
+
+    def test_close_failure_still_joins_the_worker_and_is_raised(self):
+        s, sock = streamer(time.monotonic, start=True)
+        with patch.object(sock, 'close', side_effect=OSError('close failed')):
+            with self.assertRaisesRegex(OSError, 'close failed'):
+                s.close()
+        self.assertFalse(s.thread.is_alive())
+
     def test_first_step_sends_info_then_data_to_the_configured_group(self):
         now = [100.0]
         s, sock = streamer(lambda: now[0], psn_tracker_id=7, psn_group='239.1.2.3', psn_port=6000)
@@ -156,5 +210,8 @@ class PsnStreamerTests(unittest.TestCase):
         try:
             self.assertEqual(s.socket.getsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, 4), socket.inet_aton('127.0.0.1'))
             self.assertEqual(s.socket.getsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL), 1)
+            self.assertIsNotNone(s.socket.gettimeout())
+            self.assertGreater(s.socket.gettimeout(), 0)
+            self.assertLess(s.socket.gettimeout(), 1)
         finally:
             s.close()
