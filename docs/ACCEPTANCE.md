@@ -11,6 +11,7 @@ Use a test show with no live hardware output for initial console checks. Then us
 | 2026-10-16 | macOS, Python 3.12.10, Tk and local UDP access, review fixes | Integrated automated suite | 229 tests run: 228 passed, 1 Windows-only batch execution test skipped. Real Tk workflows, visible startup, minimum-size/footer/focus geometry and local UDP receiver checks ran. No onPC reception or physical aiming established. |
 | 2026-10-16 | Local checkout | Supporting checks | Example settings validation, macOS launcher syntax, whitespace check and workflow YAML parsing passed. Independent integration review found no remaining actionable issue after fixes. Remote CI has not run. |
 | 2026-10-16 | Fake input/output, temporary settings, macOS light appearance | Minimum-size visual screenshot | Applied 0% and pending 100% brightness were readable. Screenshot exposed a clipped footer; corrected layout passes visible geometry/focus regressions. The computer-use service stalled, so no final screenshot or full manual keyboard/dark-appearance pass was completed. |
+| 2026-10-19 | GitHub Actions, commit `1ac34cf`, Python 3.10 and latest stable | Remote Windows and macOS jobs | Both Windows jobs, including actual batch launcher execution, and both macOS jobs passed. macOS Tk availability gates still apply. Linux initially failed SDL2 discovery; CI now installs the development package providing the library link. See [PR #3 checks](https://github.com/SALhik/grandMA3-joystick-followspot/pull/3/checks) for current results. No physical/onPC operation established. |
 
 New automated, visual and operator results belong here after execution. CI configuration alone is not a recorded CI pass.
 
@@ -57,6 +58,6 @@ Status: **partial**, as recorded above. A complete manual pass in both available
 
 ## Windows and other computers
 
-Windows launcher with Python/Tk and SDL2.dll, real joystick input, onPC reception and fixture output: **pending**. The Linux/Windows headless and macOS Tk/native CI jobs must also be observed running remotely; local macOS results do not establish those jobs passed.
+Windows launcher smoke execution is covered by the remote CI result above. Real Windows joystick input, onPC reception and fixture output: **pending**. Remote jobs report platform and GUI skips explicitly; their results do not establish physical operation.
 
 Cross-computer PSN multicast routing, interface selection and OSC reception: **pending**; follow [PSN.md](PSN.md#script-on-a-different-computer-unverified).

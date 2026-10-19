@@ -29,7 +29,8 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install SDL2 on Linux
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libsdl2-2.0-0
+        # ctypes.find_library('SDL2') needs the libSDL2.so link from the dev package.
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
       - name: Install pinned SDL2 runtime on Windows
         if: runner.os == 'Windows'
         shell: pwsh
