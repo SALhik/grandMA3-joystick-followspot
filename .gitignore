@@ -4,3 +4,8 @@ __pycache__/
 settings.json
 *.log
 .DS_Store
+# Personal movement-test package embeds a snapshot of operator settings.
+diagnostics/ma_plugin_probe/FollowspotMovementTest.xml
+diagnostics/ma_plugin_probe/FollowspotDirectTest.xml
+# Generated full plugin packages may embed personal settings.
+ma_plugin/JoystickFollowspot*.xml

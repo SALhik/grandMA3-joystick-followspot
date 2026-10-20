@@ -4,7 +4,7 @@ Status: available as an optional output in the app (Setup → Output → Positio
 
 ## Why
 
-The OSC command `ClearSelection; MArker 1; Attribute ...` replaces the operator's selection on every position update, so the encoder wheels cannot be used while output runs. `Attribute` needs a selection, and no documented Lua call writes programmer values without one. Other ideas (a separate OSC user, a second station) were not tested; the OSC row has no user column.
+The standalone app's OSC command `ClearSelection; MArker 1; Attribute ...` replaces the operator's selection on every position update, so the encoder wheels cannot be used while output runs. The [native plugin](PLUGIN.md) instead uses indexed programmer channels; the direct diagnostic confirmed movement while preserving selection in onPC 2.5.1.0. This still uses the programmer. Other ideas (a separate OSC user, a second station) were not tested; the OSC row has no user column.
 
 PosiStageNet (PSN) moves a MArker directly from a tracker, with no command line and no selection involved.
 

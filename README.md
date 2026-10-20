@@ -4,14 +4,21 @@ A small Python controller for grandMA3 onPC 2.5, running on the same computer as
 
 All physical fixture assignment and aiming stay in grandMA3. This tool does not compute aim from stage geometry or manage a fixture list; in pan/tilt mode it only integrates the stick into pan and tilt percentages.
 
+For the native onPC panel, import **JoystickFollowspot.xml** and follow
+[the plugin guide](docs/PLUGIN.md). It reuses this project's input and motion
+code, controls the current show directly, and offers optional PSN position
+output. No OSC configuration is needed for the plugin.
+
 ## Documentation
 
 | Document | Contents |
 | --- | --- |
+| [docs/PLUGIN.md](docs/PLUGIN.md) | Full grandMA3 plugin: import, native configuration pages, direct output, optional PSN, reports and build instructions |
 | [docs/GRANDMA3_SETUP.md](docs/GRANDMA3_SETUP.md) | Step-by-step onPC setup with every command, the figure-8 test, troubleshooting |
 | [docs/OPERATING.md](docs/OPERATING.md) | Joystick configuration, marker or pan/tilt control, buttons, reset lock, zoom/iris, test mode, stop/restart, settings file, limitations |
 | [docs/PSN.md](docs/PSN.md) | Optional PSN position output that moves the MArker without taking the console selection: app and onPC setup, Stop vs Release marker, findings, test sender, packet format (checked with the test sender only) |
 | [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) | Recorded verification and pending checks for onPC, physical input, long-running PSN, Windows and visual/keyboard operation |
+| [Experimental plugin diagnostics](diagnostics/ma_plugin_probe/README.md) | Synthetic input probe, [stage 2 OSC movement test](diagnostics/ma_plugin_probe/MOVEMENT_TEST.md), and [stage 3 direct Lua test](diagnostics/ma_plugin_probe/DIRECT_TEST.md) using saved MArker settings |
 | [AGENTS.md](AGENTS.md) | For AI agents and contributors: code map, workflow, integration contracts, verification limits |
 
 ## Quick start

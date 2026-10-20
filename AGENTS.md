@@ -46,6 +46,8 @@ current code and Git state, and preserve unrelated operator changes.
 | `requirements.txt` | Comment-only: records that there are no third-party packages |
 | `.coderabbit.yaml` | Review-bot configuration (docstring check off) |
 | `tools/psn_test_sender.py` | Stdlib PSN test sender for onPC; not imported by the app, which has its own `PsnStreamer` (see docs/PSN.md) |
+| `diagnostics/ma_plugin_probe/` | Experimental synthetic input, finite OSC movement and direct native-Lua channel probes; single-XML builders and separate offline tests. The OSC package embeds a read-only settings snapshot and app core; the direct probe generates motion frames with the core at build time and uses no Python/network at runtime. Personal XML is ignored. Not part of the app runtime. |
+| `ma_plugin/` | Full native grandMA3 plugin: `build.py` embeds Lua UI/output and Python core/input in one XML; `runtime.py` adapts Controller to semantic frames and reliable command events; `worker.py` owns private atomic IPC, lease, lock and PSN lifecycle. See docs/PLUGIN.md. |
 | `.github/workflows/tests.yml` | Linux/Windows headless and macOS Tk/native CI; GUI skips remain explicit |
 | `tests/` | Core behavior, PSN encoder/streamer, device backend, and headless window lifecycle tests |
 | `README.md` | Short overview: documentation index, quick start, launch, diagnostics |
@@ -256,11 +258,35 @@ brightness, and button checks. Preserve these distinctions in completion reports
 
 As of 2026-10-08, the operator has observed MA receiving OSC and rejecting the
 old combined selection/attribute commands. The separator fix has regression
-coverage, but successful movement with the corrected syntax still needs operator
-confirmation. An earlier “Select and open a joystick first” report was not
+coverage; the 2026-10-20 operator movement confirmation through the imported
+OSC test plugin is recorded in docs/ACCEPTANCE.md. An earlier “Select and open a joystick first” report was not
 reproduced. One plausible cause was fixed on 2026-10-09: an OSC send failure
 used to close the joystick, so the next Start showed that message. Do not
 claim the report is resolved without operator evidence.
+
+Also on 2026-10-20, the operator confirmed MArker movement through the direct
+native-Lua probe in onPC 2.5.1.0, with unrelated selection/grid and encoder
+context retained in its report. They subsequently observed actual brightness
+reach 100% from a 0% Master on Page 1 / Executor 201 (Sequence 901). The old
+probe immediately read back 0% and aborted before XYZ; its new 0.3.1.0 version
+waits up to one second for the asynchronous readback before starting the full
+motion cycle. The operator confirmed combined one-press success with that fix;
+report `run.LSVdY780` records 0% → 100% settling in about 0.040 s followed by
+226 XYZ frames, with empty selection and encoder context retained. This probe
+does not establish the finished plugin's input/helper lifecycle.
+
+The full plugin was added on 2026-10-20, reusing core/input without changing
+the standalone app runtime. Native MArker channel writes preserve selection;
+pan/tilt deliberately retains the selection-based core command via internal
+Cmd. Faders use the assigned object's Master/Temp, not OSC. Config is a
+namespaced show/user UserVar; the Python executable preference is local.
+One shared helper lock, private owner token and three-second lease bound
+orphan lifetime. Stop cancels pending presses/frames, releases owned commands
+and retains PSN; Release/normal Close require inline confirmation for a hold.
+Off Plugin is unconditional cleanup. Do not introduce blocking UI dialogs
+while renewing the lease. Packaged Lua/Python tests run offline with MA,
+input and socket boundaries intercepted; the full native layout, MA-launched
+physical joystick, actual package PSN and long runs remain operator checks.
 
 On 2026-10-14 the operator verified in onPC 2.5.0.3 that PSN packets move a
 MArker without touching the console selection or encoders (multicast
@@ -272,9 +298,9 @@ Windows, and the Live view and Setup layout were not checked visually by the
 operator; see docs/ACCEPTANCE.md for recorded evidence and the pending operator checks.
 
 Added since then: proportional zoom/iris axis, the figure-8 test mode with the
-step-by-step setup guide, and the Windows launcher. None has operator
-confirmation recorded here: zoom/iris movement in a test show and the Windows
-launcher on real hardware remain unverified.
+step-by-step setup guide, and the Windows launcher. The imported plugin exercises
+the shared figure-8 controller; the app's GUI test mode, zoom/iris movement in a
+test show and the Windows launcher on real hardware remain unverified.
 
 Pan/tilt control mode was added on 2026-10-15 (branch `feat/pan-tilt-control`)
 and is covered by automated tests only. Not verified: that onPC accepts the
