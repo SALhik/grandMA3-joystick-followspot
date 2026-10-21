@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 HERE=Path(__file__).resolve().parent
 PROJECT=HERE.parent
 sys.path.insert(0,str(PROJECT))
-from followspot_core import Settings, setting_types
+from followspot_core import BUTTON_ACTIONS, Settings, setting_types
 
 
 def literal(text):
@@ -20,47 +20,62 @@ def literal(text):
 
 
 def schema():
-    pages={name:[] for name in ('Joystick','Target','Levels','Diagnostics')}
+    """Setup pages for the native panel: ordered fields grouped into sections, with choice labels."""
+    pages={name:[] for name in ('Joystick','Target','Levels','Buttons','Diagnostics')}
     types=setting_types()
-    def field(page,key,label,**extra):
-        pages[page].append(dict(key=key,label=label,kind=types[key].__name__,**extra))
-    for key,label in [('axis_x','X / pan axis'),('axis_y','Y / tilt axis'),('axis_slider','Brightness axis')]:
-        field('Joystick',key,label,learn=True)
-    for key,label in [('invert_x','Invert X / pan'),('invert_y','Invert Y / tilt'),('invert_slider','Invert brightness')]:
-        field('Joystick',key,label)
-    field('Joystick','dead_zone','Stick dead zone (%)',scale=100)
-    field('Joystick','max_speed','Maximum speed (m/s)',mode='marker')
-    field('Joystick','pan_tilt_speed','Maximum speed (% points/s)',mode='pan_tilt')
-    field('Joystick','centre_x','X centre offset');field('Joystick','centre_y','Y centre offset')
-    pages['Target'] += [dict(key='control_mode',label='Control',kind='choice',choices=['marker','pan_tilt']),
-                        dict(key='output_mode',label='MArker position output',kind='choice',choices=['direct','psn'],root=True,mode='marker')]
-    marker=[('marker_id','MArker CID'),('z','Fixed height Z (m)'),('initial_x','Initial / reset X (m)'),
-        ('initial_y','Initial / reset Y (m)'),('x_min','Operating X minimum (m)'),('x_max','Operating X maximum (m)'),
-        ('y_min','Operating Y minimum (m)'),('y_max','Operating Y maximum (m)')]
-    for key,label in marker: field('Target',key,label,mode='marker')
-    for axis in 'xyz':
-        for end in ('min','max'): field('Target',f'space_{axis}_{end}',f'Movement Space {axis.upper()} {end} (m)',mode='marker',output='direct')
-        field('Target','attribute_'+axis,'Attribute '+axis.upper(),mode='marker',output='direct')
-    for key,label in [('psn_tracker_id','PSN tracker ID'),('psn_group','PSN multicast group'),
-        ('psn_port','PSN port'),('psn_interface','PSN sender interface IPv4')]:
-        field('Target',key,label,mode='marker',output='psn')
-    for key,label in [('fixture_group','Fixture group'),('pan_min','Pan minimum (%)'),('pan_max','Pan maximum (%)'),
-        ('tilt_min','Tilt minimum (%)'),('tilt_max','Tilt maximum (%)'),('initial_pan','Initial / reset pan (%)'),
-        ('initial_tilt','Initial / reset tilt (%)'),('attribute_pan','Pan attribute'),('attribute_tilt','Tilt attribute')]:
-        field('Target',key,label,mode='pan_tilt')
-    for key,label in [('executor_page','Brightness page'),('executor_number','Brightness executor (Master)'),
-        ('zoom_enabled','Enable zoom / iris')]: field('Levels',key,label)
-    for key,label in [('axis_zoom','Zoom / iris axis'),('invert_zoom','Invert zoom / iris'),
-        ('centre_zoom','Zoom / iris centre offset'),('zoom_speed','Zoom / iris speed (% points/s)'),
-        ('initial_zoom','Initial / reset zoom / iris (%)'),('zoom_executor_page','Zoom / iris page'),
-        ('zoom_executor_number','Zoom / iris executor (Temp)')]:
-        field('Levels',key,label,zoom=True,learn=key=='axis_zoom')
-    field('Levels','zoom_dead_zone','Zoom / iris dead zone (%)',zoom=True,scale=100)
-    for key,label in [('test_period','Test cycle duration (s)'),('test_brightness','Test brightness (%)'),
-        ('test_size','Test half-width (m)'),('test_pan_tilt_size','Test pan half-swing (%)'),
-        ('reset_locked','Lock reset while running')]:
-        field('Diagnostics',key,label,**({'mode':'marker'} if key=='test_size' else {'mode':'pan_tilt'} if key=='test_pan_tilt_size' else {}))
+    def group(page,section,entries,**common):
+        for key,label,*extra in entries:
+            field=dict(key=key,label=label,section=section)
+            field.update(common)
+            field.update(extra[0] if extra else {})
+            field.setdefault('kind',types[key].__name__ if key in types else 'str')
+            pages[page].append(field)
+    group('Joystick','Axes',[('axis_x','X / pan axis'),('axis_y','Y / tilt axis'),('axis_slider','Brightness axis')],learn=True)
+    group('Joystick','Inversion',[('invert_x','Invert X / pan'),('invert_y','Invert Y / tilt'),('invert_slider','Invert brightness')])
+    group('Joystick','Response',[('dead_zone','Stick dead zone (%)',dict(scale=100)),
+        ('max_speed','Maximum speed (m/s)',dict(mode='marker')),
+        ('pan_tilt_speed','Maximum speed (% points/s)',dict(mode='pan_tilt')),
+        ('centre_x','X centre offset'),('centre_y','Y centre offset')])
+    group('Target','Control',[
+        ('control_mode','Control mode',dict(kind='choice',choices=['marker','pan_tilt'],
+            labels={'marker':'MArker','pan_tilt':'Pan / tilt'})),
+        ('output_mode','MArker position output',dict(kind='choice',choices=['direct','psn'],root=True,mode='marker',
+            labels={'direct':'Direct (programmer)','psn':'PSN stream'}))])
+    group('Target','MArker',[('marker_id','MArker CID'),('z','Fixed height Z (m)'),('initial_x','Initial / reset X (m)'),
+        ('initial_y','Initial / reset Y (m)')],mode='marker')
+    group('Target','Operating limits',[('x_min','Operating X minimum (m)'),('x_max','Operating X maximum (m)'),
+        ('y_min','Operating Y minimum (m)'),('y_max','Operating Y maximum (m)')],mode='marker')
+    group('Target','Attributes',[('attribute_'+axis,'Attribute '+axis.upper()) for axis in 'xyz'],mode='marker',output='direct')
+    group('Target','Movement Space',[(f'space_{axis}_{end}',f'Movement Space {axis.upper()} {end} (m)')
+        for axis in 'xyz' for end in ('min','max')],mode='marker',output='direct')
+    group('Target','PSN',[('psn_tracker_id','PSN tracker ID'),('psn_group','PSN multicast group'),
+        ('psn_port','PSN port'),('psn_interface','PSN sender interface IPv4')],mode='marker',output='psn')
+    group('Target','Pan / tilt group',[('fixture_group','Fixture group'),('initial_pan','Initial / reset pan (%)'),
+        ('initial_tilt','Initial / reset tilt (%)'),('attribute_pan','Pan attribute'),('attribute_tilt','Tilt attribute')],mode='pan_tilt')
+    group('Target','Pan / tilt limits',[('pan_min','Pan minimum (%)'),('pan_max','Pan maximum (%)'),
+        ('tilt_min','Tilt minimum (%)'),('tilt_max','Tilt maximum (%)')],mode='pan_tilt')
+    group('Levels','Brightness',[('executor_page','Brightness page'),('executor_number','Brightness executor (Master)')])
+    group('Levels','Zoom / iris',[('zoom_enabled','Enable zoom / iris',dict(zoom=False)),('initial_zoom','Initial / reset zoom / iris (%)'),
+        ('zoom_executor_page','Zoom / iris page'),('zoom_executor_number','Zoom / iris executor (Temp)')],zoom=True)
+    group('Levels','Zoom / iris axis',[('axis_zoom','Zoom / iris axis',dict(learn=True)),('invert_zoom','Invert zoom / iris'),
+        ('centre_zoom','Zoom / iris centre offset'),('zoom_dead_zone','Zoom / iris dead zone (%)',dict(scale=100)),
+        ('zoom_speed','Zoom / iris speed (% points/s)')],zoom=True)
+    group('Buttons','Button editor',[('id','Button index (starts at 0)',dict(learn='button')),
+        ('action','Action on press',dict(kind='choice',choices=list(BUTTON_ACTIONS),labels=dict(BUTTON_ACTIONS))),
+        ('press','MA command on press',dict(command_only=True)),
+        ('release','MA command on release',dict(command_only=True))],button=True)
+    group('Diagnostics','Helper',[('python','Python 3.10+ executable (this Mac)',dict(python=True)),
+        ('reset_locked','Lock reset while running')])
+    group('Diagnostics','Test figure eight',[('test_period','Test cycle duration (s)'),('test_brightness','Test brightness (%)'),
+        ('test_size','Test half-width (m)',dict(mode='marker')),
+        ('test_pan_tilt_size','Test pan half-swing (%)',dict(mode='pan_tilt'))])
     return pages
+
+
+def plugin_config(settings):
+    """The plugin's {settings, output_mode} shape; OSC transport settings are not part of it."""
+    return dict(output_mode='psn' if settings.control_mode=='marker' and settings.position_output=='psn' else 'direct',
+        settings={k:v for k,v in settings.to_dict().items() if k not in ('host','port','prefix','position_output')})
 
 
 def build(destination,settings_path):
@@ -68,9 +83,7 @@ def build(destination,settings_path):
     if not settings_path.is_file(): raise ValueError('Saved settings file not found: '+str(settings_path))
     if destination.resolve()==settings_path.resolve() or (destination.exists() and destination.samefile(settings_path)):
         raise ValueError('Plugin output must not overwrite the input settings.')
-    settings=Settings.load(settings_path)
-    config=dict(output_mode='psn' if settings.control_mode=='marker' and settings.position_output=='psn' else 'direct',
-        settings={k:v for k,v in settings.to_dict().items() if k not in ('host','port','prefix','position_output')})
+    config=plugin_config(Settings.load(settings_path))
     modules={'__JSON__':(HERE/'json.lua').read_text(),'__OUTPUT__':(HERE/'output.lua').read_text(),
              '__UI__':(HERE/'ui.lua').read_text()}
     payloads={name:(HERE/name).read_text() for name in ('worker.py','runtime.py')}
