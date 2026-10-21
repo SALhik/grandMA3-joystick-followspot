@@ -288,7 +288,9 @@ with no heartbeat for five seconds as finished, so Close and Reconnect never
 wait on a helper that did not start. Plugin arguments (`start`, `stop`,
 `toggle`, `test`, `reset`, `release`, `show`) act only on an open panel. Stop cancels pending presses/frames, releases owned commands
 and retains PSN; Release/normal Close require inline confirmation for a hold.
-Off Plugin is unconditional cleanup. Do not introduce blocking UI dialogs
+Off Plugin is unconditional cleanup, except that a Cleanup run right after a
+non-owning call (argument or second open) is ignored via a marker cleared on the
+next pump tick, so a stale marker can never swallow a real Off Plugin. Do not introduce blocking UI dialogs
 while renewing the lease. Packaged Lua/Python tests run offline with MA,
 input and socket boundaries intercepted; the full native layout, MA-launched
 physical joystick, actual package PSN and long runs remain operator checks.

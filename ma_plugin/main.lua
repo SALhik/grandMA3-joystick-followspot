@@ -167,6 +167,11 @@ end
 local function Cleanup()
     local state = active
     if not state then return end
+    -- MA may run Cleanup right after a non-owning Main returns; that is not Off Plugin.
+    if state.skip_cleanup then
+        state.skip_cleanup = nil
+        return
+    end
     state.closed = true
     pcall(urgent, state, 'shutdown')
     cleanup_releases(state)
@@ -336,6 +341,9 @@ local function pump(state)
         return
     end
     state.tick = state.tick + 1
+    -- A skip marker only covers the Cleanup that immediately follows a non-owning call;
+    -- if MA did not run one, it must not swallow a later Off Plugin.
+    state.skip_cleanup = nil
     if state.ui.confirm and Time() > state.confirm_until then
         state.ui.confirm = nil
         if state.ui.notice and state.ui.notice.level == 'confirm' then state.ui:notify(nil) end
@@ -395,6 +403,7 @@ end
 local function Main(display, argument)
     local command = type(argument) == 'string' and argument:lower():match('^%s*(.-)%s*$') or ''
     if active then
+        active.skip_cleanup = true
         if command == '' or command == 'show' then
             active.ui.root.Visible = true
         else
@@ -447,6 +456,7 @@ local function Main(display, argument)
         end
         coroutine.yield(1 / 30)
     end
+    state.skip_cleanup = nil -- the owner's own teardown is never skipped
     Cleanup()
 end
 
@@ -455,6 +465,7 @@ local function Entry(display, argument)
     local ok, why = xpcall(Main, debug.traceback, display, argument)
     if not ok then
         if owner then
+            if active then active.skip_cleanup = nil end
             pcall(Cleanup)
             active = nil
         end

@@ -147,6 +147,40 @@ click('Close');step(60)
 assert(coroutine.status(thread)=='dead')
 ''', psn=True, position_output='psn')
 
+    def test_cleanup_after_a_non_owning_call_leaves_the_panel_running(self):
+        self.scenario(r'''
+thread=coroutine.create(main)
+assert(run_until(ready))
+assert(coroutine.resume(coroutine.create(main),nil,'test'))
+cleanup() -- MA runs Cleanup when the argument call's Main returns
+assert(run_until(running),'Argument "test" did not start output after MA ran Cleanup')
+assert(find('JoystickFollowspotPanel') and coroutine.status(thread)~='dead','Cleanup after an argument call closed the panel')
+assert(coroutine.resume(coroutine.create(main),nil,'show'))
+cleanup()
+step(2)
+assert(find('JoystickFollowspotPanel') and running(),'Cleanup after a show call closed the panel')
+-- Without a Cleanup for the call (or once a tick has passed) the next Cleanup is a real Off Plugin.
+assert(coroutine.resume(coroutine.create(main),nil,'stop'))
+step(2)
+cleanup()
+step(5)
+assert(coroutine.status(thread)=='dead','Off Plugin was swallowed after an earlier argument call')
+''')
+
+    def test_close_in_the_same_tick_as_an_argument_call_still_tears_down(self):
+        self.scenario(r'''
+thread=coroutine.create(main)
+step(200,false)
+click('Close')
+assert(coroutine.resume(coroutine.create(main),nil,'show'))
+step(5,false)
+assert(coroutine.status(thread)=='dead','Close was lost to an argument call in the same tick')
+local said=false;local printf=Printf
+Printf=function(f,...) if f:find('open the plugin',1,true) then said=true end return printf(f,...) end
+assert(coroutine.resume(coroutine.create(main),nil,'stop'))
+assert(said,'Owner teardown was skipped; the closed panel still counts as open')
+''', python='/nonexistent/python3')
+
     def test_settings_are_written_only_when_changed_and_read_back(self):
         self.scenario(r'''
 local stored=0
