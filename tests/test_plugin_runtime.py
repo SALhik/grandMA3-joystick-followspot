@@ -137,6 +137,30 @@ class PluginRuntimeTests(unittest.TestCase):
         self.assertFalse(self.runtime.snapshot()['running'])
         self.assertIn('network failed', self.runtime.snapshot()['fault'])
 
+    def test_check_stream_surfaces_error_without_ticking_output(self):
+        self.config['output_mode'] = 'psn'
+        self.runtime.command('configure', {'config': self.config})
+        self.runtime.command('test')
+        stream = self.runtime.stream
+        self.assertFalse(self.runtime.check_stream())
+        stream.error = OSError('network failed')
+        self.assertTrue(self.runtime.check_stream())
+        self.assertTrue(stream.closed)
+        self.assertIsNone(self.runtime.stream)
+        self.assertFalse(self.runtime.snapshot()['running'])
+        self.assertEqual(self.runtime.fault, 'PSN: network failed')
+
+    def test_hold_after_lease_loss_stops_output_but_keeps_stream(self):
+        self.config['output_mode'] = 'psn'
+        self.runtime.command('configure', {'config': self.config})
+        self.runtime.command('test')
+        stream = self.runtime.stream
+        self.runtime.hold_after_lease_loss()
+        self.assertFalse(self.runtime.snapshot()['running'])
+        self.assertFalse(stream.closed)
+        self.assertIs(self.runtime.stream, stream)
+        self.assertIn('MA heartbeat lost', self.runtime.fault)
+
     def test_input_failure_stops_and_closes_device_without_resuming(self):
         self.connect()
         self.runtime.command('start')
