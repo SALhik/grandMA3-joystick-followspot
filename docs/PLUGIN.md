@@ -22,11 +22,15 @@ The prepared personal file is in MA's usual import folder:
    files are extracted automatically. After a package update, re-import into
    that object; copying a new XML does not update an existing pool object.
 2. Tap the plugin. Output always starts **stopped**. The helper starts in the
-   background; no separate Tk window opens. If Python cannot launch, open
-   **Diagnostics**, enter its full executable path and click **Reconnect helper**.
+   background; no separate Tk window opens. If Python cannot launch, the panel
+   reports that the helper is not responding after about five seconds and shows
+   the end of `reader.log`, and the badge reads **NO HELPER**. Open
+   **Diagnostics**, enter the full executable path and click **Reconnect
+   helper**; Close also works without a running helper and wins over a
+   Reconnect pressed while the helper is still shutting down.
    The path is remembered on this Mac. The python.org installer normally gives
    `/Library/Frameworks/Python.framework/Versions/Current/bin/python3`.
-3. In **Target**, choose **MArker** and **direct**. The personal package is
+3. Click **Setup**, open **Target** and choose **MArker** and **Direct (programmer)**. The personal package is
    seeded from the existing app configuration. Confirm the MArker CID, fixed
    height, initial/reset position, travel limits and Movement Space bounds.
    **Read MA movement space** copies the configured MArker's space bounds into
@@ -38,16 +42,18 @@ The prepared personal file is in MA's usual import folder:
    dimmer values. The plugin controls its **Master**. Optional zoom/iris uses
    a separate object's **Temp** fader; configure its cue as in
    [GRANDMA3_SETUP.md](GRANDMA3_SETUP.md#optional-zoom--iris-executor).
-5. Use **Test figure eight** on Live or Diagnostics. No joystick is required.
+5. Use **Test figure 8** on the Live strip. No joystick is required.
    It sends real output for one configured cycle and then stops/holds. Test
    brightness is fixed; normal Start uses the live joystick slider. Check
-   the Live Start preview before either action.
-6. Open **Joystick**, click **Refresh**, cycle the device button to the desired
-   entry and click **Open chosen device**. Refresh closes the old input before
-   enumeration. Choose explicitly even for identically named controllers.
-   Use Learn beside each axis, move only that control, then Save. Release the
-   stick before **Calibrate X / Y**. Raw axes/buttons appear in the status area.
-7. Save settings, review Live, and **Start output**. Returning the stick to
+   the Start preview (Setup → Diagnostics) before either action; the strip's
+   hint line also says when Start will apply unsaved changes.
+6. Open **Joystick**, click **Refresh**, tap the desired device row and click
+   **Open chosen device**. Refresh closes the old input before enumeration.
+   Choose explicitly even for identically named controllers. Use Learn beside
+   each axis, move only that control, then Save. Release the stick before
+   **Calibrate X / Y**. Raw axes/buttons appear in the Joystick tab's Device
+   section.
+7. Save settings, review the Live strip, and **Start output**. Returning the stick to
    centre holds the tracked position. All MA fixture assignments, geometry,
    patch and aiming remain in the show.
 
@@ -57,37 +63,63 @@ MArker. Brightness, zoom/iris and mapped MA commands use internal MA APIs.
 Fader changes are asynchronous: the plugin sends changed levels without an
 immediate readback assertion. It does not repeatedly resend idle levels.
 
-## Pages and settings
+## Panel and settings
 
-- **Live:** tracked target and requested levels, applied output state, pending
-  Start information, input readiness and PSN hold. These are controller targets,
-  not measured fixture/beam positions.
-- **Joystick:** axis learning, inversions, radial dead zone, proportional speed
-  and centre offsets. Dead zones display as percentages and persist as fractions.
+The panel opens as a compact **Live strip** that can stay open during a show.
+It shows a coloured state badge (RUNNING, TEST RUNNING, STOPPED, PSN HOLDING,
+NO HELPER),
+the applied target, requested brightness/zoom, the open joystick, a hint line
+saying why Start is unavailable (or that Start will apply unsaved changes),
+the main controls (Start, Stop, Reset, Release PSN, Test figure 8, Reset lock)
+and one notice line. Notices are coloured by severity: neutral for
+information, warning colour for confirmations and warnings, error colour for
+faults. A pending Release/Close confirmation outranks other notices.
+**Cancel confirmation** and **Ack release warning** appear beside the
+notice only when needed. Target and levels are controller targets, not
+measured fixture/beam positions.
+
+**Setup** expands the panel to the settings tabs; the active tab is
+highlighted and **Hide setup** returns to the strip. Long tabs have section
+headings and **Previous / Next** with "Page x of y". Choices show labels
+(MArker, Pan / tilt, Direct (programmer), PSN stream, On/Off) while settings
+store the raw values. The footer shows **Unsaved changes** when the draft
+differs from the applied settings. A validation error opens the named field's
+tab and page and marks its label; for a field hidden by the current control
+mode or position output it names the selector to switch. Faults during output
+never expand Setup.
+
+- **Joystick:** device list (tap a row, then Open), live raw axes/buttons, axis
+  learning, inversions, radial dead zone, proportional speed and centre
+  offsets. Dead zones display as percentages and persist as fractions.
 - **Target:** MArker or pan/tilt group, direct or PSN position output, operating
-  bounds and initial values. Inactive settings are hidden. Use **Next settings
-  page** for additional fields. Movement Space and operating limits differ.
+  bounds and initial values. Inactive settings are hidden. Movement Space and
+  operating limits differ.
 - **Levels:** brightness Master, optional zoom/iris speed axis, its dead zone,
   centre, initial level and Temp executor. Centre holds the zoom/iris level.
-- **Buttons:** learn/index a button, choose MA press/release commands or a local
-  action, then **Add / update**. **Load mapping**, **Remove mapping** and
-  **Discard editor** manage the editor explicitly. Uncommitted editor changes
-  block Save/Start. A saved mapping list appears below the editor.
+- **Buttons:** learn/index a button, choose an MA command or a local action,
+  then **Add / update**. Saved mappings appear as a table (index, action,
+  press, release); tap a row to load it into the editor. **Remove mapping**
+  and **Discard editor** manage the editor explicitly. Uncommitted editor
+  changes block Save/Start.
 - **Diagnostics:** finite test size/period/brightness, reset lock, Python path,
-  helper reconnect and release-warning acknowledgement. Faults remain visible
+  helper reconnect and the draft-based Start preview. Faults remain visible
   independently of routine messages.
 
 Setup remains readable during output. Editing, Save, learning and calibration
 require Stop. Start validates/applies the whole draft; invalid input remains
-available for correction. Reset is locked while running by default. The Live
-reset-lock toggle saves only the lock, preserving other draft edits. Reset
+available for correction. Reset is locked while running by default, and the
+Reset button is disabled while locked output runs. The reset-lock toggle shows
+and inverts the applied lock and saves only the lock, preserving other draft
+edits. Reset
 uses applied settings to return target and enabled zoom/iris to their initial
 values, leaving brightness. Save edited initial values before using Reset.
 
 Settings live in a namespaced **UserVar in the current MA show/user profile**.
 Save the MA show to preserve them across reload. They do not overwrite the
 standalone app's `settings.json`. A newly imported package seeds defaults only
-when that user variable does not exist. Python path preference stays on the
+when that user variable does not exist. Save and Start write the variable only
+when the settings changed and confirm the write by reading it back; a mismatch
+is reported and blocks Start. Python path preference stays on the
 computer. Changing MA show/user context ends this helper; reopen the plugin.
 
 Mapped local actions follow the standalone app's priority: Stop/Release beat
@@ -95,7 +127,22 @@ Start and Reset; Start beats stopped Reset. Held-at-Start buttons do not become
 new presses. Learning suppresses actions. MA commands remain ordered and
 queued until Lua processes them; Stop cancels pending presses and attempts
 releases for owned actions. Failed releases stay visible; clear the action in
-MA before acknowledging the warning.
+MA before acknowledging the warning. MA's `Cmd()` takes a format string, so a
+literal `%` in a mapped command may be misread; avoid `%` in mappings until it
+has been checked in onPC.
+
+## Plugin arguments
+
+While the panel is open, a macro or executor can drive it with
+`Plugin "Joystick Followspot" "<argument>"`. Arguments: `start`, `stop`,
+`toggle` (Stop when running, otherwise Start), `test`, `reset`, `release` and
+`show`. They follow the same rules as the panel buttons (Start applies the
+draft, including values typed but not yet saved, and needs an open joystick;
+Reset respects the lock). `release` is
+immediate, like a mapped joystick Release. With the panel closed an argument
+only prints a System Monitor message; it does not open the panel or launch the
+helper. An unknown argument is reported as a warning. Calling the plugin while
+its panel is already running is not yet verified in onPC.
 
 ## Optional PSN
 
@@ -109,13 +156,20 @@ change In & Out settings or create patch objects.
 **Stop holds the last PSN position** by keeping the existing background stream
 open. Live shows **PSN HOLDING**, including the actual held XYZ separately from
 the pending target. **Release PSN** requires two clicks: first arms the inline
-confirmation, second closes the stream. Cancel confirmation leaves it held.
-Mapped Release is immediate. Closing with a held stream uses the same inline
-two-click confirmation. Changed PSN/control-mode fields cannot be applied until
+confirmation, second closes the stream. The confirmation expires after three
+seconds, and any other action or Cancel confirmation disarms it, leaving the
+stream held. Mapped and argument Release are immediate. Closing with a held
+stream uses the same inline two-click confirmation. Changed PSN/control-mode fields cannot be applied until
 the held stream is released; other stopped edits remain possible.
 
 `Off Plugin "Joystick Followspot"`, forced host/UI teardown, a helper crash or
-lease expiry ends streaming. MA may then return the MArker to origin. The
+lease expiry ends streaming. If MA stops renewing the lease (for example a Lua
+stall during a show load), the helper stops output after three seconds but
+keeps a held PSN stream for up to fifteen seconds; Live then shows the
+heartbeat fault and output stays stopped until Start. Without a stream the
+helper exits after three seconds. After the fifteen-second hold the helper
+releases the stream and exits; the panel shows NO HELPER until Reconnect. MA
+may then return the MArker to origin. The
 normal UI Close/Release confirmation does not protect an unconditional Off or
 host crash. A joystick disconnect stops input but preserves an existing hold;
 an actual PSN send error closes the failed stream and stays visible.
@@ -147,7 +201,8 @@ owner/version, configuration, raw input, output state, faults and exit reason.
 The panel prints the run folder in System Monitor. A shared lock prevents two
 helpers from running on this computer for the same plugin data directory.
 No process search or blanket process-kill commands are used. With no MA
-heartbeat for about three seconds the helper closes its resources and exits.
+heartbeat for about three seconds the helper stops output; it exits then, or
+after about fifteen seconds while it holds a PSN stream (see Optional PSN).
 Button releases cannot be guaranteed after a host crash; inspect held actions.
 
 Build from the project folder (Python settings are read only):

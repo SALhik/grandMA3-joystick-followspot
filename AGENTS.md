@@ -47,9 +47,9 @@ current code and Git state, and preserve unrelated operator changes.
 | `.coderabbit.yaml` | Review-bot configuration (docstring check off) |
 | `tools/psn_test_sender.py` | Stdlib PSN test sender for onPC; not imported by the app, which has its own `PsnStreamer` (see docs/PSN.md) |
 | `diagnostics/ma_plugin_probe/` | Experimental synthetic input, finite OSC movement and direct native-Lua channel probes; single-XML builders and separate offline tests. The OSC package embeds a read-only settings snapshot and app core; the direct probe generates motion frames with the core at build time and uses no Python/network at runtime. Personal XML is ignored. Not part of the app runtime. |
-| `ma_plugin/` | Full native grandMA3 plugin: `build.py` embeds Lua UI/output and Python core/input in one XML; `runtime.py` adapts Controller to semantic frames and reliable command events; `worker.py` owns private atomic IPC, lease, lock and PSN lifecycle. See docs/PLUGIN.md. |
+| `ma_plugin/` | Full native grandMA3 plugin: `build.py` embeds Lua UI/output and Python core/input in one XML; `runtime.py` adapts Controller to semantic frames and reliable command events; `worker.py` owns private atomic IPC, lease, lock and PSN lifecycle; `ui.lua` is one native panel with a compact Live strip and an expandable Setup view whose fields, sections and choice labels come from `build.py`'s schema. See docs/PLUGIN.md. |
 | `.github/workflows/tests.yml` | Linux/Windows headless and macOS Tk/native CI; GUI skips remain explicit |
-| `tests/` | Core behavior, PSN encoder/streamer, device backend, and headless window lifecycle tests |
+| `tests/` | Core behavior, PSN encoder/streamer, device backend, and headless window lifecycle tests; `plugin_harness.py` builds the plugin XML and runs its Lua against MA API doubles for the plugin package, lifecycle and UI tests |
 | `README.md` | Short overview: documentation index, quick start, launch, diagnostics |
 | `docs/GRANDMA3_SETUP.md` | Operator step-by-step onPC setup with commands, zoom/iris executor, troubleshooting |
 | `docs/OPERATING.md` | Operator guide: joystick, buttons, reset lock, zoom/iris, test mode, stop/restart, limitations |
@@ -280,8 +280,13 @@ the standalone app runtime. Native MArker channel writes preserve selection;
 pan/tilt deliberately retains the selection-based core command via internal
 Cmd. Faders use the assigned object's Master/Temp, not OSC. Config is a
 namespaced show/user UserVar; the Python executable preference is local.
-One shared helper lock, private owner token and three-second lease bound
-orphan lifetime. Stop cancels pending presses/frames, releases owned commands
+One shared helper lock, private owner token and a two-stage lease bound
+orphan lifetime: three seconds without renewal stops output (and exits with no
+PSN stream); a held PSN stream survives up to fifteen seconds, without ticking
+input, so a Lua stall does not snap the MArker to origin. Lua treats a helper
+with no heartbeat for five seconds as finished, so Close and Reconnect never
+wait on a helper that did not start. Plugin arguments (`start`, `stop`,
+`toggle`, `test`, `reset`, `release`, `show`) act only on an open panel. Stop cancels pending presses/frames, releases owned commands
 and retains PSN; Release/normal Close require inline confirmation for a hold.
 Off Plugin is unconditional cleanup. Do not introduce blocking UI dialogs
 while renewing the lease. Packaged Lua/Python tests run offline with MA,
